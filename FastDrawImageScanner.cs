@@ -9,7 +9,7 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Flavor;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Runs;
 
-namespace BadApple.Patches;
+namespace FastDrawImg.Patches;
 
 public partial class FastDrawImageScanner : Node2D
 {
@@ -24,7 +24,7 @@ public partial class FastDrawImageScanner : Node2D
 
     private readonly Vector2I _renderRes = new(160, 120);
     private const float PixelScale = 2.0f;
-    private Vector2 _drawOffset = new(60, 40);
+    private readonly Vector2 _drawOffset = new(60, 40);
     private const float LuminanceThreshold = 0.5f;
     private const int LineDensity = 2;
 
@@ -302,7 +302,8 @@ public partial class FastDrawImageScanner : Node2D
             for (int x = 0; x < _renderRes.X; x++)
             {
                 bool on = frame.GetPixel(x, y).R > 0.5f;
-                if (on) runStart ??= x;
+                if (on)
+                    runStart ??= x;
                 else if (runStart.HasValue)
                 {
                     for (int sub = 0; sub < LineDensity; sub++)
@@ -321,7 +322,9 @@ public partial class FastDrawImageScanner : Node2D
 
     private void SendEvent(INetGameService ns, ref MapDrawingMessage msg, NetMapDrawingEvent ev)
     {
-        if (msg.TryAddEvent(ev)) return;
+        if (msg.TryAddEvent(ev))
+            return;
+
         ns.SendMessage(msg);
         msg = new MapDrawingMessage { drawingMode = DrawingMode.Drawing };
         msg.TryAddEvent(ev);

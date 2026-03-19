@@ -2,9 +2,9 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
-using BadApple.Patches;
+using FastDrawImg.Patches;
 
-namespace BadApple;
+namespace FastDrawImg;
 
 [ModInitializer(nameof(Initialize))]
 public class FastDrawImageMain
@@ -13,7 +13,7 @@ public class FastDrawImageMain
 
     public static void Initialize()
     {
-        GD.Print("[FastDrawImg] === 静态图模式初始化 ===");
+        GD.Print("[FastDrawImg] === 图片模式初始化 ===");
 
         try
         {
