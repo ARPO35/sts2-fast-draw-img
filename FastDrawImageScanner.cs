@@ -9,7 +9,7 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Flavor;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Runs;
 
-namespace BadApple.Patches;
+namespace FastDrawImg.Patches;
 
 public partial class FastDrawImageScanner : Node2D
 {
@@ -24,7 +24,7 @@ public partial class FastDrawImageScanner : Node2D
 
     private readonly Vector2I _renderRes = new(160, 120);
     private const float PixelScale = 2.0f;
-    private Vector2 _drawOffset = new(60, 40);
+    private readonly Vector2 _drawOffset = new(60, 40);
     private const float LuminanceThreshold = 0.5f;
     private const int LineDensity = 2;
 
@@ -74,11 +74,16 @@ public partial class FastDrawImageScanner : Node2D
 
     public void ClearCurrentImage()
     {
-        _binaryImage = null;
-        _currentImagePath = null;
-        _previewSprite.Visible = false;
+        ResetPreviewState("已清空当前图像", forgetLoadedImage: true);
         SendClearToNetwork();
-        SetStatus("已清空当前图像");
+    }
+
+    public void OnMapCleared()
+    {
+        if (_binaryImage == null && !_previewSprite.Visible)
+            return;
+
+        ResetPreviewState("地图绘制已清空，按 U 可重绘当前图像");
     }
 
     public void DrawCurrentImage()
@@ -302,7 +307,8 @@ public partial class FastDrawImageScanner : Node2D
             for (int x = 0; x < _renderRes.X; x++)
             {
                 bool on = frame.GetPixel(x, y).R > 0.5f;
-                if (on) runStart ??= x;
+                if (on)
+                    runStart ??= x;
                 else if (runStart.HasValue)
                 {
                     for (int sub = 0; sub < LineDensity; sub++)
@@ -321,7 +327,9 @@ public partial class FastDrawImageScanner : Node2D
 
     private void SendEvent(INetGameService ns, ref MapDrawingMessage msg, NetMapDrawingEvent ev)
     {
-        if (msg.TryAddEvent(ev)) return;
+        if (msg.TryAddEvent(ev))
+            return;
+
         ns.SendMessage(msg);
         msg = new MapDrawingMessage { drawingMode = DrawingMode.Drawing };
         msg.TryAddEvent(ev);
@@ -340,6 +348,18 @@ public partial class FastDrawImageScanner : Node2D
         Vector2 start = (_drawOffset + new Vector2(x1 * PixelScale, drawY)) * 2f;
         Vector2 end = (_drawOffset + new Vector2(x2 * PixelScale, drawY)) * 2f;
         list.Add((start, end));
+    }
+
+    private void ResetPreviewState(string status, bool forgetLoadedImage = false)
+    {
+        if (forgetLoadedImage)
+        {
+            _binaryImage = null;
+            _currentImagePath = null;
+        }
+
+        _previewSprite.Visible = false;
+        SetStatus(status);
     }
 
     private void SetStatus(string text)

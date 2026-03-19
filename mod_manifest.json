@@ -1,10 +1,10 @@
 {
-  "id": "BadAppleMod",
-  "name": "Bad Apple 播放器",
-  "author": "leddele,Boninall",
+  "id": "FastDrawImg",
+  "name": "Fast Draw Image",
+  "author": "leddele, Boninall",
   "version": "1.2.0",
-  "description": "U 键地图影绘（联机自动同步），Ctrl+U 暂停/继续。",
-  "entry_point": "BadApple.Main",
-  "dll_name": "BadAppleMod.dll",
-  "pck_name": "BadAppleMod"
+  "description": "Ctrl+U 导入图片，Ctrl+V 粘贴路径，U 绘制当前图片，Shift+U 清空。",
+  "entry_point": "FastDrawImg.FastDrawImageMain",
+  "dll_name": "FastDrawImg.dll",
+  "pck_name": "FastDrawImg"
 }
