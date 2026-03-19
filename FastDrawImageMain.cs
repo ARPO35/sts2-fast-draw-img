@@ -45,6 +45,20 @@ public class FastDrawImageMain
         }
     }
 
+    [HarmonyPatch(typeof(NMapDrawings), nameof(NMapDrawings.ClearAllLines))]
+    private static class MapDrawingsClearAllLinesPatch
+    {
+        public static void Postfix(NMapDrawings __instance)
+            => GetScanner(__instance)?.OnMapCleared();
+    }
+
+    [HarmonyPatch(typeof(NMapDrawings), nameof(NMapDrawings.ClearAllLinesForPlayer))]
+    private static class MapDrawingsClearAllLinesForPlayerPatch
+    {
+        public static void Postfix(NMapDrawings __instance)
+            => GetScanner(__instance)?.OnMapCleared();
+    }
+
     [HarmonyPatch(typeof(NMapDrawings), "_UnhandledInput")]
     private static class MapDrawingsInputPatch
     {

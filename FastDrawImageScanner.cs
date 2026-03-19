@@ -74,11 +74,16 @@ public partial class FastDrawImageScanner : Node2D
 
     public void ClearCurrentImage()
     {
-        _binaryImage = null;
-        _currentImagePath = null;
-        _previewSprite.Visible = false;
+        ResetPreviewState("已清空当前图像", forgetLoadedImage: true);
         SendClearToNetwork();
-        SetStatus("已清空当前图像");
+    }
+
+    public void OnMapCleared()
+    {
+        if (_binaryImage == null && !_previewSprite.Visible)
+            return;
+
+        ResetPreviewState("地图绘制已清空，按 U 可重绘当前图像");
     }
 
     public void DrawCurrentImage()
@@ -343,6 +348,18 @@ public partial class FastDrawImageScanner : Node2D
         Vector2 start = (_drawOffset + new Vector2(x1 * PixelScale, drawY)) * 2f;
         Vector2 end = (_drawOffset + new Vector2(x2 * PixelScale, drawY)) * 2f;
         list.Add((start, end));
+    }
+
+    private void ResetPreviewState(string status, bool forgetLoadedImage = false)
+    {
+        if (forgetLoadedImage)
+        {
+            _binaryImage = null;
+            _currentImagePath = null;
+        }
+
+        _previewSprite.Visible = false;
+        SetStatus(status);
     }
 
     private void SetStatus(string text)
