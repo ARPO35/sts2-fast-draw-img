@@ -68,6 +68,9 @@ public partial class FastDrawImageScanner : Node2D
             _dropConnected = false;
         }
 
+        if (IsInstanceValid(_mapDrawings))
+            _mapDrawings.Resized -= OnMapDrawingsResized;
+
         if (IsInstanceValid(_overlay))
             _overlay.QueueFree();
 
@@ -186,11 +189,27 @@ public partial class FastDrawImageScanner : Node2D
         {
             Name = "FastDrawDrawAreaOverlay"
         };
-        _overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _mapDrawings.AddChild(_overlay);
+        SyncOverlayLayout();
+        _mapDrawings.Resized += OnMapDrawingsResized;
+
         _overlay.SetDrawArea(_drawArea);
         _overlay.AreaSelected += OnAreaSelected;
         _overlay.SelectionCanceled += OnAreaSelectionCanceled;
-        _mapDrawings.AddChild(_overlay);
+        _overlay.MoveToFront();
+    }
+
+    private void OnMapDrawingsResized() => SyncOverlayLayout();
+
+    private void SyncOverlayLayout()
+    {
+        if (!IsInstanceValid(_overlay))
+            return;
+
+        _overlay.Position = Vector2.Zero;
+        _overlay.Size = _mapDrawings.Size;
+        _overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _overlay.QueueRedraw();
     }
 
     private void BuildUi()
