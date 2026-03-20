@@ -48,6 +48,9 @@ public sealed class FastDrawImgConfigFile
     [JsonPropertyName("affects_gameplay")]
     public bool? AffectsGameplay { get; init; }
 
+    [JsonPropertyName("debugLogEnabled")]
+    public bool? DebugLogEnabled { get; init; }
+
     [JsonPropertyName("shortcuts")]
     public FastDrawShortcutConfigSection? Shortcuts { get; init; }
 }
@@ -157,11 +160,11 @@ public sealed class FastDrawShortcuts
             {
                 if (!TryParseBinding(configuredValue, out ShortcutBinding parsedBinding, out string error))
                 {
-                    GD.PushWarning($"[FastDrawImg] 快捷键 {spec.ConfigName}=\"{configuredValue}\" 无效：{error}，回退默认值 {spec.DefaultBinding.DisplayText}");
+                    FastDrawLog.Warn($"快捷键 {spec.ConfigName}=\"{configuredValue}\" 无效：{error}，回退默认值 {spec.DefaultBinding.DisplayText}");
                 }
                 else if (usedBindings.TryGetValue(parsedBinding.Signature, out FastDrawShortcutAction duplicateAction))
                 {
-                    GD.PushWarning($"[FastDrawImg] 快捷键 {spec.ConfigName}=\"{configuredValue}\" 与 {GetConfigName(duplicateAction)} 冲突，回退默认值 {spec.DefaultBinding.DisplayText}");
+                    FastDrawLog.Warn($"快捷键 {spec.ConfigName}=\"{configuredValue}\" 与 {GetConfigName(duplicateAction)} 冲突，回退默认值 {spec.DefaultBinding.DisplayText}");
                 }
                 else
                 {
@@ -172,7 +175,7 @@ public sealed class FastDrawShortcuts
 
             if (fallbackToDefault && usedBindings.TryGetValue(binding.Signature, out FastDrawShortcutAction defaultConflictAction))
             {
-                GD.PushWarning($"[FastDrawImg] 快捷键 {spec.ConfigName} 回退默认值 {binding.DisplayText} 后仍与 {GetConfigName(defaultConflictAction)} 冲突，请检查 FastDrawImg.json");
+                FastDrawLog.Warn($"快捷键 {spec.ConfigName} 回退默认值 {binding.DisplayText} 后仍与 {GetConfigName(defaultConflictAction)} 冲突，请检查 FastDrawImg.json");
             }
 
             bindings[spec.Action] = binding;
@@ -355,10 +358,12 @@ public static class FastDrawShortcutConfig
     public static void Load()
     {
         string configPath = ResolveConfigPath();
+        string baseDirectory = Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory;
         if (!File.Exists(configPath))
         {
+            FastDrawLog.Configure(baseDirectory, enabled: false);
             Current = FastDrawShortcuts.CreateDefault();
-            GD.PushWarning($"[FastDrawImg] 未找到快捷键配置文件 {configPath}，使用默认快捷键");
+            FastDrawLog.Warn($"未找到快捷键配置文件 {configPath}，使用默认快捷键");
             return;
         }
 
@@ -366,13 +371,16 @@ public static class FastDrawShortcutConfig
         {
             string json = File.ReadAllText(configPath);
             FastDrawImgConfigFile? config = JsonSerializer.Deserialize<FastDrawImgConfigFile>(json, JsonOptions);
+            FastDrawLog.Configure(baseDirectory, config?.DebugLogEnabled ?? false);
             Current = FastDrawShortcuts.FromConfig(config?.Shortcuts);
+            FastDrawLog.Debug($"配置已载入: path={configPath}, debugLogEnabled={FastDrawLog.IsDebugEnabled}");
             GD.Print($"[FastDrawImg] 快捷键配置已载入: {configPath}");
         }
         catch (Exception ex)
         {
+            FastDrawLog.Configure(baseDirectory, enabled: false);
             Current = FastDrawShortcuts.CreateDefault();
-            GD.PushWarning($"[FastDrawImg] 读取快捷键配置失败，使用默认快捷键: {ex.Message}");
+            FastDrawLog.Warn($"读取快捷键配置失败，使用默认快捷键: {ex.Message}");
         }
     }
 
