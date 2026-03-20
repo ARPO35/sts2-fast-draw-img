@@ -15,34 +15,33 @@ public partial class FastDrawImageScanner : Node2D
 {
     public const string NodeName = "FastDrawImageScanner";
     private const float MinDrawAreaSize = 16f;
+    private const float RenderScaleDivisor = 4f;
+    private const int MinRenderDimension = 32;
+    private const int MaxRenderDimension = 320;
+    private const int LineDensity = 2;
+    private const float LuminanceThreshold = 0.5f;
     private static readonly Rect2 DefaultDrawArea = new(new Vector2(120f, 80f), new Vector2(640f, 480f));
 
     private NMapDrawings _mapDrawings = null!;
-    private Sprite2D _previewSprite = null!;
     private DrawAreaOverlay _overlay = null!;
     private ImageTexture? _previewTex;
     private FileDialog _fileDialog = null!;
     private CanvasLayer _uiLayer = null!;
     private Label _statusLabel = null!;
 
-    private readonly Vector2I _renderRes = new(160, 120);
-    private const float PixelScale = 2.0f;
-    private readonly Vector2 _drawOffset = new(60, 40);
-    private const float LuminanceThreshold = 0.5f;
-    private const int LineDensity = 2;
-
     private Color _drawColor = Colors.White;
+    private Image? _sourceImage;
     private Image? _binaryImage;
     private string? _currentImagePath;
     private ulong? _localPlayerId;
     private bool _dropConnected;
+    private bool _previewVisible;
     private Rect2 _drawArea = DefaultDrawArea;
 
     public void Initialize(NMapDrawings drawings)
     {
         _mapDrawings = drawings;
         ResolvePlayerDrawColor();
-        BuildPreview();
         BuildOverlay();
         BuildUi();
         TryConnectFileDrop();
@@ -107,7 +106,7 @@ public partial class FastDrawImageScanner : Node2D
 
     public void OnMapCleared()
     {
-        if (_binaryImage == null && !_previewSprite.Visible)
+        if (_binaryImage == null && !_previewVisible)
             return;
 
         ResetPreviewState("地图绘制已清空，按 U 可重绘当前图像");
@@ -136,8 +135,9 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         UpdatePreviewTexture();
+        _previewVisible = true;
+        _overlay.SetPreviewVisible(true);
         SendImageToNetwork();
-        _previewSprite.Visible = true;
         SetStatus($"已绘制: {(_currentImagePath ?? "剪贴板路径")}");
     }
 
@@ -163,18 +163,6 @@ public partial class FastDrawImageScanner : Node2D
         }
     }
 
-    private void BuildPreview()
-    {
-        _previewSprite = new Sprite2D
-        {
-            Centered = false,
-            Position = _drawOffset,
-            Scale = new Vector2(PixelScale, PixelScale),
-            Visible = false
-        };
-        AddChild(_previewSprite);
-    }
-
     private void BuildOverlay()
     {
         _overlay = new DrawAreaOverlay
@@ -182,7 +170,7 @@ public partial class FastDrawImageScanner : Node2D
             Name = "FastDrawDrawAreaOverlay"
         };
         _overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-        _overlay.DrawArea = _drawArea;
+        _overlay.SetDrawArea(_drawArea);
         _overlay.AreaSelected += OnAreaSelected;
         _overlay.SelectionCanceled += OnAreaSelectionCanceled;
         _mapDrawings.AddChild(_overlay);
@@ -194,7 +182,7 @@ public partial class FastDrawImageScanner : Node2D
 
         var panel = new PanelContainer();
         panel.Position = new Vector2(24, 24);
-        panel.Size = new Vector2(360, 126);
+        panel.Size = new Vector2(480, 126);
 
         var vbox = new VBoxContainer();
         panel.AddChild(vbox);
@@ -268,14 +256,15 @@ public partial class FastDrawImageScanner : Node2D
         if (area.Size.X < MinDrawAreaSize || area.Size.Y < MinDrawAreaSize)
         {
             SetStatus("选区太小，至少需要 16x16");
-            _overlay.DrawArea = _drawArea;
-            _overlay.QueueRedraw();
+            _overlay.SetDrawArea(_drawArea);
             return;
         }
 
         _drawArea = area;
-        _overlay.DrawArea = _drawArea;
-        _overlay.QueueRedraw();
+        _overlay.SetDrawArea(_drawArea);
+        if (_sourceImage != null)
+            RefreshRenderedImage(_previewVisible);
+
         SetStatus($"已更新绘制区域: {Mathf.RoundToInt(area.Size.X)}x{Mathf.RoundToInt(area.Size.Y)}");
     }
 
@@ -293,9 +282,8 @@ public partial class FastDrawImageScanner : Node2D
                 return false;
 
             _currentImagePath = path;
-            _binaryImage = PrepareBinaryImage(image);
-            UpdatePreviewTexture();
-            _previewSprite.Visible = true;
+            _sourceImage = PrepareSourceImage(image);
+            RefreshRenderedImage(showPreview: true);
             SetStatus($"已载入: {Path.GetFileName(path)}，按 U 绘制");
             return true;
         }
@@ -306,16 +294,38 @@ public partial class FastDrawImageScanner : Node2D
         }
     }
 
+    private Image PrepareSourceImage(Image image)
+    {
+        Image source = (Image)image.Duplicate();
+        if (source.GetFormat() != Image.Format.Rgba8)
+            source.Convert(Image.Format.Rgba8);
+        return source;
+    }
+
+    private void RefreshRenderedImage(bool showPreview)
+    {
+        if (_sourceImage == null)
+        {
+            _binaryImage = null;
+            _previewVisible = false;
+            _overlay.SetPreviewTexture(null);
+            _overlay.SetPreviewVisible(false);
+            return;
+        }
+
+        _binaryImage = PrepareBinaryImage(_sourceImage);
+        _previewVisible = showPreview;
+        UpdatePreviewTexture();
+        _overlay.SetPreviewVisible(_previewVisible);
+    }
+
     private Image PrepareBinaryImage(Image image)
     {
-        Image work = (Image)image.Duplicate();
-        if (work.GetFormat() != Image.Format.Rgba8)
-            work.Convert(Image.Format.Rgba8);
+        Vector2I renderSize = CalculateRenderSize(_drawArea.Size);
+        Image work = CreateFittedBinaryCanvas(image, renderSize);
 
-        work.Resize(_renderRes.X, _renderRes.Y, Image.Interpolation.Nearest);
-
-        for (int y = 0; y < _renderRes.Y; y++)
-        for (int x = 0; x < _renderRes.X; x++)
+        for (int y = 0; y < renderSize.Y; y++)
+        for (int x = 0; x < renderSize.X; x++)
         {
             Color px = work.GetPixel(x, y);
             work.SetPixel(x, y, px.Luminance > LuminanceThreshold ? Colors.White : Colors.Black);
@@ -324,27 +334,68 @@ public partial class FastDrawImageScanner : Node2D
         return work;
     }
 
+    private Vector2I CalculateRenderSize(Vector2 areaSize)
+    {
+        int width = Math.Max(MinRenderDimension, Mathf.RoundToInt(areaSize.X / RenderScaleDivisor));
+        int height = Math.Max(MinRenderDimension, Mathf.RoundToInt(areaSize.Y / RenderScaleDivisor));
+
+        int longestEdge = Math.Max(width, height);
+        if (longestEdge > MaxRenderDimension)
+        {
+            float scale = MaxRenderDimension / (float)longestEdge;
+            width = Math.Max(MinRenderDimension, Mathf.RoundToInt(width * scale));
+            height = Math.Max(MinRenderDimension, Mathf.RoundToInt(height * scale));
+        }
+
+        return new Vector2I(width, height);
+    }
+
+    private Image CreateFittedBinaryCanvas(Image source, Vector2I renderSize)
+    {
+        Image canvas = Image.CreateEmpty(renderSize.X, renderSize.Y, false, Image.Format.Rgba8);
+        canvas.Fill(Colors.Black);
+
+        int sourceWidth = source.GetWidth();
+        int sourceHeight = source.GetHeight();
+        if (sourceWidth <= 0 || sourceHeight <= 0)
+            return canvas;
+
+        float scale = Math.Min(renderSize.X / (float)sourceWidth, renderSize.Y / (float)sourceHeight);
+        int fittedWidth = Math.Max(1, Mathf.RoundToInt(sourceWidth * scale));
+        int fittedHeight = Math.Max(1, Mathf.RoundToInt(sourceHeight * scale));
+
+        Image resized = (Image)source.Duplicate();
+        resized.Resize(fittedWidth, fittedHeight, Image.Interpolation.Nearest);
+
+        Vector2I offset = new((renderSize.X - fittedWidth) / 2, (renderSize.Y - fittedHeight) / 2);
+        Rect2I sourceRect = new(0, 0, fittedWidth, fittedHeight);
+        canvas.BlitRect(resized, sourceRect, offset);
+        return canvas;
+    }
+
     private void UpdatePreviewTexture()
     {
         if (_binaryImage == null)
+        {
+            _overlay.SetPreviewTexture(null);
             return;
+        }
 
-        Image preview = Image.CreateEmpty(_renderRes.X, _renderRes.Y, false, Image.Format.Rgba8);
+        int width = _binaryImage.GetWidth();
+        int height = _binaryImage.GetHeight();
+        Image preview = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
         Color transparent = new(0, 0, 0, 0);
 
-        for (int y = 0; y < _renderRes.Y; y++)
-        for (int x = 0; x < _renderRes.X; x++)
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
             preview.SetPixel(x, y, _binaryImage.GetPixel(x, y).R > 0.5f ? _drawColor : transparent);
 
-        if (_previewTex == null)
-        {
+        if (_previewTex == null || _previewTex.GetWidth() != width || _previewTex.GetHeight() != height)
             _previewTex = ImageTexture.CreateFromImage(preview);
-            _previewSprite.Texture = _previewTex;
-        }
         else
-        {
             _previewTex.Update(preview);
-        }
+
+        _overlay.SetPreviewTexture(_previewTex);
     }
 
     private void SendClearToNetwork()
@@ -388,12 +439,19 @@ public partial class FastDrawImageScanner : Node2D
     private List<(Vector2 start, Vector2 end)> BuildSegments(Image frame)
     {
         var segments = new List<(Vector2 start, Vector2 end)>();
-        float subStep = PixelScale / LineDensity;
+        int width = frame.GetWidth();
+        int height = frame.GetHeight();
+        if (width <= 0 || height <= 0)
+            return segments;
 
-        for (int y = 0; y < _renderRes.Y; y++)
+        float cellWidth = _drawArea.Size.X / width;
+        float cellHeight = _drawArea.Size.Y / height;
+        float subStep = cellHeight / LineDensity;
+
+        for (int y = 0; y < height; y++)
         {
             int? runStart = null;
-            for (int x = 0; x < _renderRes.X; x++)
+            for (int x = 0; x < width; x++)
             {
                 bool on = frame.GetPixel(x, y).R > 0.5f;
                 if (on)
@@ -401,14 +459,14 @@ public partial class FastDrawImageScanner : Node2D
                 else if (runStart.HasValue)
                 {
                     for (int sub = 0; sub < LineDensity; sub++)
-                        AddSegment(segments, runStart.Value, x, y * PixelScale + sub * subStep);
+                        AddSegment(segments, runStart.Value, x, y, cellWidth, cellHeight, sub * subStep);
                     runStart = null;
                 }
             }
 
             if (runStart.HasValue)
                 for (int sub = 0; sub < LineDensity; sub++)
-                    AddSegment(segments, runStart.Value, _renderRes.X, y * PixelScale + sub * subStep);
+                    AddSegment(segments, runStart.Value, width, y, cellWidth, cellHeight, sub * subStep);
         }
 
         return segments;
@@ -432,10 +490,11 @@ public partial class FastDrawImageScanner : Node2D
         return pos;
     }
 
-    private void AddSegment(List<(Vector2, Vector2)> list, int x1, int x2, float drawY)
+    private void AddSegment(List<(Vector2, Vector2)> list, int x1, int x2, int row, float cellWidth, float cellHeight, float rowOffset)
     {
-        Vector2 start = (_drawOffset + new Vector2(x1 * PixelScale, drawY)) * 2f;
-        Vector2 end = (_drawOffset + new Vector2(x2 * PixelScale, drawY)) * 2f;
+        float y = _drawArea.Position.Y + row * cellHeight + rowOffset;
+        Vector2 start = new(_drawArea.Position.X + x1 * cellWidth, y);
+        Vector2 end = new(_drawArea.Position.X + x2 * cellWidth, y);
         list.Add((start, end));
     }
 
@@ -443,11 +502,15 @@ public partial class FastDrawImageScanner : Node2D
     {
         if (forgetLoadedImage)
         {
+            _sourceImage = null;
             _binaryImage = null;
             _currentImagePath = null;
+            _previewTex = null;
+            _overlay.SetPreviewTexture(null);
         }
 
-        _previewSprite.Visible = false;
+        _previewVisible = false;
+        _overlay.SetPreviewVisible(false);
         SetStatus(status);
     }
 

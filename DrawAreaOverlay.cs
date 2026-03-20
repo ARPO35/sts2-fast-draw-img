@@ -14,6 +14,8 @@ public partial class DrawAreaOverlay : Control
     private bool _dragging;
     private Vector2 _dragStart;
     private Rect2 _selectionRect = default;
+    private Texture2D? _previewTexture;
+    private bool _previewVisible;
 
     public Rect2 DrawArea { get; set; } = default;
 
@@ -26,6 +28,24 @@ public partial class DrawAreaOverlay : Control
     {
         MouseFilter = MouseFilterEnum.Ignore;
         FocusMode = FocusModeEnum.All;
+    }
+
+    public void SetDrawArea(Rect2 area)
+    {
+        DrawArea = area;
+        QueueRedraw();
+    }
+
+    public void SetPreviewTexture(Texture2D? texture)
+    {
+        _previewTexture = texture;
+        QueueRedraw();
+    }
+
+    public void SetPreviewVisible(bool visible)
+    {
+        _previewVisible = visible;
+        QueueRedraw();
     }
 
     public void EnterSelectionMode()
@@ -109,7 +129,11 @@ public partial class DrawAreaOverlay : Control
     {
         if (DrawArea.Size.X > 0f && DrawArea.Size.Y > 0f)
         {
-            DrawRect(DrawArea, AreaFillColor, true);
+            if (_previewVisible && _previewTexture != null)
+                DrawTextureRect(_previewTexture, DrawArea, false, null, false);
+            else
+                DrawRect(DrawArea, AreaFillColor, true);
+
             DrawRect(DrawArea, AreaOutlineColor, false, 2f);
         }
 
