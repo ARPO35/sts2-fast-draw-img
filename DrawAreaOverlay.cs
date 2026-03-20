@@ -9,6 +9,8 @@ public partial class DrawAreaOverlay : Control
     private static readonly Color AreaOutlineColor = new(0.20f, 0.70f, 0.95f, 0.90f);
     private static readonly Color SelectionFillColor = new(0.95f, 0.80f, 0.20f, 0.18f);
     private static readonly Color SelectionOutlineColor = new(0.95f, 0.80f, 0.20f, 0.95f);
+    private const float MarkerRadius = 5f;
+    private const float MarkerCrossHalfSize = 8f;
 
     private bool _selectionMode;
     private Rect2 _selectionRect = default;
@@ -80,6 +82,8 @@ public partial class DrawAreaOverlay : Control
                 DrawRect(DrawArea, AreaFillColor, true);
 
             DrawRect(DrawArea, AreaOutlineColor, false, 2f);
+            DrawMarker(DrawArea.Position, AreaOutlineColor);
+            DrawMarker(DrawArea.End, AreaOutlineColor);
         }
 
         if (_selectionMode && _selectionRect.Size.X > 0f && _selectionRect.Size.Y > 0f)
@@ -87,5 +91,12 @@ public partial class DrawAreaOverlay : Control
             DrawRect(_selectionRect, SelectionFillColor, true);
             DrawRect(_selectionRect, SelectionOutlineColor, false, 2f);
         }
+    }
+
+    private void DrawMarker(Vector2 point, Color color)
+    {
+        DrawCircle(point, MarkerRadius, color);
+        DrawLine(point + new Vector2(-MarkerCrossHalfSize, 0f), point + new Vector2(MarkerCrossHalfSize, 0f), color, 2f);
+        DrawLine(point + new Vector2(0f, -MarkerCrossHalfSize), point + new Vector2(0f, MarkerCrossHalfSize), color, 2f);
     }
 }

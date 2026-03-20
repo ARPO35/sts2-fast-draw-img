@@ -82,10 +82,8 @@ public sealed class FastDrawShortcutConfigSection
 public readonly record struct ShortcutBinding(Key Keycode, bool Ctrl, bool Shift, bool Alt)
 {
     public bool Matches(InputEventKey keyEvent)
-        => keyEvent.Keycode == Keycode
-           && keyEvent.CtrlPressed == Ctrl
-           && keyEvent.ShiftPressed == Shift
-           && keyEvent.AltPressed == Alt;
+        => MatchesModifiers(keyEvent.CtrlPressed, keyEvent.ShiftPressed, keyEvent.AltPressed)
+           && MatchesAnyKeycode(keyEvent);
 
     public string Signature => $"{(int)Keycode}:{Ctrl}:{Shift}:{Alt}";
 
@@ -121,6 +119,16 @@ public readonly record struct ShortcutBinding(Key Keycode, bool Ctrl, bool Shift
             _ => key.ToString()
         };
     }
+
+    private bool MatchesAnyKeycode(InputEventKey keyEvent)
+        => keyEvent.Keycode == Keycode
+           || keyEvent.KeyLabel == Keycode
+           || keyEvent.PhysicalKeycode == Keycode;
+
+    private bool MatchesModifiers(bool ctrlPressed, bool shiftPressed, bool altPressed)
+        => ctrlPressed == Ctrl
+           && shiftPressed == Shift
+           && altPressed == Alt;
 }
 
 public sealed class FastDrawShortcuts

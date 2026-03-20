@@ -52,12 +52,24 @@ public partial class FastDrawImageScanner : Node2D
     public void Initialize(NMapDrawings drawings)
     {
         _mapDrawings = drawings;
+        SetProcessInput(true);
         ResolvePlayerDrawColor();
         BuildOverlay();
         BuildUi();
         TryConnectFileDrop();
         Visible = true;
         SetStatus(BuildShortcutSummary());
+    }
+
+    public override void _Input(InputEvent @event)
+    {
+        if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
+            return;
+
+        if (_fileDialog != null && _fileDialog.Visible)
+            return;
+
+        HandleShortcutKey(keyEvent);
     }
 
     public override void _ExitTree()
@@ -93,6 +105,68 @@ public partial class FastDrawImageScanner : Node2D
 
         CancelAreaSelection();
         return true;
+    }
+
+    public bool HandleShortcutKey(InputEventKey keyEvent)
+    {
+        FastDrawShortcuts shortcuts = FastDrawShortcutConfig.Current;
+
+        if (shortcuts.Matches(FastDrawShortcutAction.CancelSelection, keyEvent))
+            return CancelAreaSelectionShortcut();
+
+        if (shortcuts.Matches(FastDrawShortcutAction.CaptureSelectionStart, keyEvent))
+        {
+            CaptureSelectionStart();
+            return true;
+        }
+
+        if (shortcuts.Matches(FastDrawShortcutAction.CaptureSelectionEnd, keyEvent))
+        {
+            CaptureSelectionEnd();
+            return true;
+        }
+
+        if (shortcuts.Matches(FastDrawShortcutAction.ImportImage, keyEvent))
+        {
+            if (_overlay.IsSelectionMode)
+                NotifySelectionModeBlocked();
+            else
+                OpenImportDialog();
+
+            return true;
+        }
+
+        if (shortcuts.Matches(FastDrawShortcutAction.PasteImagePath, keyEvent))
+        {
+            if (_overlay.IsSelectionMode)
+                NotifySelectionModeBlocked();
+            else
+                PasteFromClipboard();
+
+            return true;
+        }
+
+        if (shortcuts.Matches(FastDrawShortcutAction.ClearCurrentImage, keyEvent))
+        {
+            if (_overlay.IsSelectionMode)
+                NotifySelectionModeBlocked();
+            else
+                ClearCurrentImage();
+
+            return true;
+        }
+
+        if (shortcuts.Matches(FastDrawShortcutAction.DrawCurrentImage, keyEvent))
+        {
+            if (_overlay.IsSelectionMode)
+                NotifySelectionModeBlocked();
+            else
+                DrawCurrentImage();
+
+            return true;
+        }
+
+        return false;
     }
 
     public void PasteFromClipboard()
@@ -175,6 +249,8 @@ public partial class FastDrawImageScanner : Node2D
             var player = pc.GetPlayer(localPlayerId);
             if (player?.Character != null)
                 _drawColor = player.Character.MapDrawingColor;
+
+            _drawColor.A = 1f;
         }
         catch
         {
