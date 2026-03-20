@@ -52,7 +52,7 @@ public class FastDrawImageMain
             => GetScanner(__instance)?.OnMapCleared();
     }
 
-    [HarmonyPatch(typeof(NMapDrawings), nameof(NMapDrawings.ClearAllLinesForPlayer))]
+    [HarmonyPatch(typeof(NMapDrawings), "ClearAllLinesForPlayer")]
     private static class MapDrawingsClearAllLinesForPlayerPatch
     {
         public static void Postfix(NMapDrawings __instance)

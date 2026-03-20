@@ -219,7 +219,7 @@ public partial class FastDrawImageScanner : Node2D
 
     private Image PrepareBinaryImage(Image image)
     {
-        Image work = image.Duplicate();
+        Image work = (Image)image.Duplicate();
         if (work.GetFormat() != Image.Format.Rgba8)
             work.Convert(Image.Format.Rgba8);
 

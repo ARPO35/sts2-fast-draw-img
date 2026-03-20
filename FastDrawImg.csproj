@@ -1,4 +1,4 @@
-﻿<Project Sdk="Godot.NET.Sdk/4.5.1">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net9.0</TargetFramework>
         <ImplicitUsings>true</ImplicitUsings>
@@ -7,35 +7,41 @@
         <AssemblyName>FastDrawImg</AssemblyName>
         <RootNamespace>FastDrawImg</RootNamespace>
 
-        <Sts2Path>F:\steam\steamapps\common\Slay the Spire 2</Sts2Path>
+        <Sts2Path Condition="'$(Sts2Path)' == ''">V:\应用\Slay the Spire 2</Sts2Path>
         <Sts2DataDir>$(Sts2Path)/data_sts2_windows_x86_64</Sts2DataDir>
-        <GodotPath>H:\Godot_v4.5.1-stable_mono_win64\Godot_v4.5.1-stable_mono_win64\Godot_v4.5.1-stable_mono_win64.exe</GodotPath>
-        <ModFolderName>FastDrawImg</ModFolderName>
+        <GodotPath Condition="'$(GodotPath)' == ''">V:\应用\Godot_v4.6.1-stable_mono_win64\Godot_v4.6.1-stable_mono_win64.exe</GodotPath>
+        <GodotApiDir Condition="'$(GodotApiDir)' == ''">V:\应用\Godot_v4.6.1-stable_mono_win64\GodotSharp\Api\Release</GodotApiDir>
+        <ModFolderName Condition="'$(ModFolderName)' == ''">FastDrawImg</ModFolderName>
     </PropertyGroup>
 
     <ItemGroup>
+        <Reference Include="GodotSharp">
+            <HintPath>$(GodotApiDir)\GodotSharp.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="0Harmony">
             <HintPath>$(Sts2DataDir)/0Harmony.dll</HintPath>
+            <Private>false</Private>
         </Reference>
         <Reference Include="sts2">
             <HintPath>$(Sts2DataDir)/sts2.dll</HintPath>
-            <Publicize>PublicizeSts</Publicize>
-        </Reference>
-        <Reference Include="BaseLib">
-            <HintPath>$(Sts2Path)/mods/BaseLib.dll</HintPath>
+            <Private>false</Private>
         </Reference>
 
-        <PackageReference Include="Alchyr.Sts2.ModAnalyzers" Version="*" />
-        <AdditionalFiles Include="FastDrawImg/localization/**/*.json"/>
+        <PackageReference Include="Alchyr.Sts2.ModAnalyzers" Version="0.0.9" />
+        <AdditionalFiles Include="FastDrawImg/localization/**/*.json" />
     </ItemGroup>
 
     <ItemGroup>
         <None Include="mod_manifest.json" />
-        <None Include="project.godot"/>
-        <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.3">
-            <PrivateAssets>all</PrivateAssets>
-            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
+        <None Include="project.godot" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Remove="packages/**/*.cs" />
+        <Compile Remove="packages/**/*.cs.uid" />
+        <Compile Remove=".dotnet/**/*.cs" />
+        <Compile Remove=".dotnet/**/*.cs.uid" />
     </ItemGroup>
 
     <Target Name="CopyToModsFolderOnBuild" AfterTargets="PostBuildEvent">
@@ -49,7 +55,7 @@
     </Target>
 
     <Target Name="GodotPublish" AfterTargets="Publish" Condition="'$(GodotPath)' != '' and Exists('$(GodotPath)')">
-        <Message Text="正在导出 PCK..." Importance="high"/>
+        <Message Text="正在导出 PCK..." Importance="high" />
         <Exec Command="&quot;$(GodotPath)&quot; --headless --export-pack &quot;Windows Desktop&quot; &quot;$(Sts2Path)/mods/$(ModFolderName)/$(AssemblyName).pck&quot;" />
     </Target>
 </Project>
