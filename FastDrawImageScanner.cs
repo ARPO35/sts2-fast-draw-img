@@ -147,15 +147,20 @@ public partial class FastDrawImageScanner : Node2D
         {
             var nsField = typeof(NMapDrawings).GetField("_netService", BindingFlags.NonPublic | BindingFlags.Instance);
             var pcField = typeof(NMapDrawings).GetField("_playerCollection", BindingFlags.NonPublic | BindingFlags.Instance);
-            dynamic? ns = nsField?.GetValue(_mapDrawings);
-            dynamic? pc = pcField?.GetValue(_mapDrawings);
-            if (ns != null && pc != null)
-            {
-                _localPlayerId = (ulong)ns.NetId;
-                var player = pc.GetPlayer(_localPlayerId.Value);
-                if (player != null)
-                    _drawColor = player.Character.MapDrawingColor;
-            }
+
+            object? netService = nsField?.GetValue(_mapDrawings);
+            object? playerCollection = pcField?.GetValue(_mapDrawings);
+            if (netService == null || playerCollection == null)
+                return;
+
+            dynamic ns = netService;
+            dynamic pc = playerCollection;
+            ulong localPlayerId = (ulong)ns.NetId;
+            _localPlayerId = localPlayerId;
+
+            var player = pc.GetPlayer(localPlayerId);
+            if (player?.Character != null)
+                _drawColor = player.Character.MapDrawingColor;
         }
         catch
         {
@@ -323,15 +328,8 @@ public partial class FastDrawImageScanner : Node2D
     {
         Vector2I renderSize = CalculateRenderSize(_drawArea.Size);
         Image work = CreateFittedBinaryCanvas(image, renderSize);
-
-        for (int y = 0; y < renderSize.Y; y++)
-        for (int x = 0; x < renderSize.X; x++)
-        {
-            Color px = work.GetPixel(x, y);
-            work.SetPixel(x, y, px.Luminance > LuminanceThreshold ? Colors.White : Colors.Black);
-        }
-
-        return work;
+        ApplyBinaryThreshold(work);
+        return ApplyMorphologicalClose(work);
     }
 
     private Vector2I CalculateRenderSize(Vector2 areaSize)
@@ -365,12 +363,65 @@ public partial class FastDrawImageScanner : Node2D
         int fittedHeight = Math.Max(1, Mathf.RoundToInt(sourceHeight * scale));
 
         Image resized = (Image)source.Duplicate();
-        resized.Resize(fittedWidth, fittedHeight, Image.Interpolation.Nearest);
+        resized.Resize(fittedWidth, fittedHeight, Image.Interpolation.Lanczos);
 
         Vector2I offset = new((renderSize.X - fittedWidth) / 2, (renderSize.Y - fittedHeight) / 2);
         Rect2I sourceRect = new(0, 0, fittedWidth, fittedHeight);
         canvas.BlitRect(resized, sourceRect, offset);
         return canvas;
+    }
+
+    private void ApplyBinaryThreshold(Image image)
+    {
+        int width = image.GetWidth();
+        int height = image.GetHeight();
+
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            Color px = image.GetPixel(x, y);
+            float luminance = px.Luminance * px.A;
+            image.SetPixel(x, y, luminance > LuminanceThreshold ? Colors.White : Colors.Black);
+        }
+    }
+
+    // A single close pass repairs tiny gaps without turning the whole image into a blob.
+    private Image ApplyMorphologicalClose(Image image)
+    {
+        int width = image.GetWidth();
+        int height = image.GetHeight();
+        Image dilated = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
+        Image closed = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
+
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            dilated.SetPixel(x, y, HasWhiteNeighbor(image, x, y) ? Colors.White : Colors.Black);
+
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            closed.SetPixel(x, y, AllNeighborsWhite(dilated, x, y) ? Colors.White : Colors.Black);
+
+        return closed;
+    }
+
+    private bool HasWhiteNeighbor(Image image, int x, int y)
+    {
+        for (int neighborY = Math.Max(0, y - 1); neighborY <= Math.Min(image.GetHeight() - 1, y + 1); neighborY++)
+        for (int neighborX = Math.Max(0, x - 1); neighborX <= Math.Min(image.GetWidth() - 1, x + 1); neighborX++)
+            if (image.GetPixel(neighborX, neighborY).R > 0.5f)
+                return true;
+
+        return false;
+    }
+
+    private bool AllNeighborsWhite(Image image, int x, int y)
+    {
+        for (int neighborY = Math.Max(0, y - 1); neighborY <= Math.Min(image.GetHeight() - 1, y + 1); neighborY++)
+        for (int neighborX = Math.Max(0, x - 1); neighborX <= Math.Min(image.GetWidth() - 1, x + 1); neighborX++)
+            if (image.GetPixel(neighborX, neighborY).R <= 0.5f)
+                return false;
+
+        return true;
     }
 
     private void UpdatePreviewTexture()
