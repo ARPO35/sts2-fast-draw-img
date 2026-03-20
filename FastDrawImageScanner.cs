@@ -13,6 +13,12 @@ namespace FastDrawImg.Patches;
 
 public partial class FastDrawImageScanner : Node2D
 {
+    private enum DrawRegionMode
+    {
+        Black = 0,
+        White = 1
+    }
+
     public const string NodeName = "FastDrawImageScanner";
     private const float MinDrawAreaSize = 16f;
     private const float RenderScaleDivisor = 4f;
@@ -28,15 +34,18 @@ public partial class FastDrawImageScanner : Node2D
     private FileDialog _fileDialog = null!;
     private CanvasLayer _uiLayer = null!;
     private Label _statusLabel = null!;
+    private OptionButton _modeOption = null!;
 
     private Color _drawColor = Colors.White;
     private Image? _sourceImage;
     private Image? _binaryImage;
+    private Image? _contentMask;
     private string? _currentImagePath;
     private ulong? _localPlayerId;
     private bool _dropConnected;
     private bool _previewVisible;
     private Rect2 _drawArea = DefaultDrawArea;
+    private DrawRegionMode _drawMode = DrawRegionMode.Black;
 
     public void Initialize(NMapDrawings drawings)
     {
@@ -46,7 +55,7 @@ public partial class FastDrawImageScanner : Node2D
         BuildUi();
         TryConnectFileDrop();
         Visible = true;
-        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空 / 选择区域重框");
+        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空 / 选择区域重框，默认绘制黑色部分，可在面板切换");
     }
 
     public override void _ExitTree()
@@ -100,7 +109,7 @@ public partial class FastDrawImageScanner : Node2D
 
     public void ClearCurrentImage()
     {
-        ResetPreviewState("已清空当前图像", forgetLoadedImage: true);
+        ResetPreviewState($"已清空当前图像，当前绘制{GetSelectedRegionText()}", forgetLoadedImage: true);
         SendClearToNetwork();
     }
 
@@ -109,7 +118,7 @@ public partial class FastDrawImageScanner : Node2D
         if (_binaryImage == null && !_previewVisible)
             return;
 
-        ResetPreviewState("地图绘制已清空，按 U 可重绘当前图像");
+        ResetPreviewState($"地图绘制已清空，当前绘制{GetSelectedRegionText()}，按 U 可重绘当前图像");
     }
 
     public void OnPlayerMapCleared(ulong playerId)
@@ -137,8 +146,11 @@ public partial class FastDrawImageScanner : Node2D
         UpdatePreviewTexture();
         _previewVisible = true;
         _overlay.SetPreviewVisible(true);
-        SendImageToNetwork();
-        SetStatus($"已绘制: {(_currentImagePath ?? "剪贴板路径")}");
+
+        if (!SendImageToNetwork())
+            return;
+
+        SetStatus($"已绘制{GetSelectedRegionText()}: {(_currentImagePath ?? "剪贴板路径")}");
     }
 
     private void ResolvePlayerDrawColor()
@@ -187,13 +199,26 @@ public partial class FastDrawImageScanner : Node2D
 
         var panel = new PanelContainer();
         panel.Position = new Vector2(24, 24);
-        panel.Size = new Vector2(480, 126);
+        panel.Size = new Vector2(480, 160);
 
         var vbox = new VBoxContainer();
         panel.AddChild(vbox);
 
         _statusLabel = new Label { Text = "未载入图像", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         vbox.AddChild(_statusLabel);
+
+        var modeRow = new HBoxContainer();
+        vbox.AddChild(modeRow);
+
+        var modeLabel = new Label { Text = "绘制区域", CustomMinimumSize = new Vector2(72, 0) };
+        modeRow.AddChild(modeLabel);
+
+        _modeOption = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _modeOption.AddItem("黑色部分", (int)DrawRegionMode.Black);
+        _modeOption.AddItem("白色部分", (int)DrawRegionMode.White);
+        _modeOption.Select((int)_drawMode);
+        _modeOption.ItemSelected += OnModeSelected;
+        modeRow.AddChild(_modeOption);
 
         var buttonRow = new HBoxContainer();
         vbox.AddChild(buttonRow);
@@ -275,6 +300,14 @@ public partial class FastDrawImageScanner : Node2D
 
     private void OnFileSelected(string path) => TryLoadImage(path);
 
+    private void OnModeSelected(long index)
+    {
+        if (index < 0)
+            return;
+
+        SetDrawMode((DrawRegionMode)_modeOption.GetItemId((int)index));
+    }
+
     private bool TryLoadImage(string path)
     {
         try
@@ -289,7 +322,7 @@ public partial class FastDrawImageScanner : Node2D
             _currentImagePath = path;
             _sourceImage = PrepareSourceImage(image);
             RefreshRenderedImage(showPreview: true);
-            SetStatus($"已载入: {Path.GetFileName(path)}，按 U 绘制");
+            SetStatus($"已载入: {Path.GetFileName(path)}，当前绘制{GetSelectedRegionText()}，按 U 绘制");
             return true;
         }
         catch (Exception ex)
@@ -312,6 +345,7 @@ public partial class FastDrawImageScanner : Node2D
         if (_sourceImage == null)
         {
             _binaryImage = null;
+            _contentMask = null;
             _previewVisible = false;
             _overlay.SetPreviewTexture(null);
             _overlay.SetPreviewVisible(false);
@@ -327,7 +361,8 @@ public partial class FastDrawImageScanner : Node2D
     private Image PrepareBinaryImage(Image image)
     {
         Vector2I renderSize = CalculateRenderSize(_drawArea.Size);
-        Image work = CreateFittedBinaryCanvas(image, renderSize);
+        Image work = CreateFittedBinaryCanvas(image, renderSize, out Image contentMask);
+        _contentMask = contentMask;
         ApplyBinaryThreshold(work);
         return ApplyMorphologicalClose(work);
     }
@@ -348,10 +383,12 @@ public partial class FastDrawImageScanner : Node2D
         return new Vector2I(width, height);
     }
 
-    private Image CreateFittedBinaryCanvas(Image source, Vector2I renderSize)
+    private Image CreateFittedBinaryCanvas(Image source, Vector2I renderSize, out Image contentMask)
     {
         Image canvas = Image.CreateEmpty(renderSize.X, renderSize.Y, false, Image.Format.Rgba8);
         canvas.Fill(Colors.Black);
+        contentMask = Image.CreateEmpty(renderSize.X, renderSize.Y, false, Image.Format.Rgba8);
+        contentMask.Fill(Colors.Black);
 
         int sourceWidth = source.GetWidth();
         int sourceHeight = source.GetHeight();
@@ -368,6 +405,12 @@ public partial class FastDrawImageScanner : Node2D
         Vector2I offset = new((renderSize.X - fittedWidth) / 2, (renderSize.Y - fittedHeight) / 2);
         Rect2I sourceRect = new(0, 0, fittedWidth, fittedHeight);
         canvas.BlitRect(resized, sourceRect, offset);
+
+        for (int y = 0; y < fittedHeight; y++)
+        for (int x = 0; x < fittedWidth; x++)
+            if (resized.GetPixel(x, y).A > 0.01f)
+                contentMask.SetPixel(offset.X + x, offset.Y + y, Colors.White);
+
         return canvas;
     }
 
@@ -439,7 +482,7 @@ public partial class FastDrawImageScanner : Node2D
 
         for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
-            preview.SetPixel(x, y, _binaryImage.GetPixel(x, y).R > 0.5f ? _drawColor : transparent);
+            preview.SetPixel(x, y, IsTargetPixel(_binaryImage, x, y) ? _drawColor : transparent);
 
         if (_previewTex == null || _previewTex.GetWidth() != width || _previewTex.GetHeight() != height)
             _previewTex = ImageTexture.CreateFromImage(preview);
@@ -457,20 +500,20 @@ public partial class FastDrawImageScanner : Node2D
         ns.SendMessage(default(ClearMapDrawingsMessage));
     }
 
-    private void SendImageToNetwork()
+    private bool SendImageToNetwork()
     {
         if (_binaryImage == null)
-            return;
+            return false;
 
         var ns = RunManager.Instance?.NetService;
         if (ns == null || ns.Type == NetGameType.Singleplayer)
-            return;
+            return true;
 
         var segments = BuildSegments(_binaryImage);
         if (segments.Count == 0)
         {
-            SetStatus("图像里没有可绘制的白色区域");
-            return;
+            SetStatus($"图像里没有可绘制的{GetDrawableRegionText()}");
+            return false;
         }
 
         ns.SendMessage(default(ClearMapDrawingsMessage));
@@ -485,6 +528,8 @@ public partial class FastDrawImageScanner : Node2D
 
         if (msg.Events.Count > 0)
             ns.SendMessage(msg);
+
+        return true;
     }
 
     private List<(Vector2 start, Vector2 end)> BuildSegments(Image frame)
@@ -504,7 +549,7 @@ public partial class FastDrawImageScanner : Node2D
             int? runStart = null;
             for (int x = 0; x < width; x++)
             {
-                bool on = frame.GetPixel(x, y).R > 0.5f;
+                bool on = IsTargetPixel(frame, x, y);
                 if (on)
                     runStart ??= x;
                 else if (runStart.HasValue)
@@ -555,6 +600,7 @@ public partial class FastDrawImageScanner : Node2D
         {
             _sourceImage = null;
             _binaryImage = null;
+            _contentMask = null;
             _currentImagePath = null;
             _previewTex = null;
             _overlay.SetPreviewTexture(null);
@@ -564,6 +610,43 @@ public partial class FastDrawImageScanner : Node2D
         _overlay.SetPreviewVisible(false);
         SetStatus(status);
     }
+
+    private void SetDrawMode(DrawRegionMode mode)
+    {
+        if (_drawMode == mode)
+            return;
+
+        _drawMode = mode;
+
+        if (_binaryImage != null)
+        {
+            UpdatePreviewTexture();
+            _previewVisible = true;
+            _overlay.SetPreviewVisible(true);
+            SetStatus($"已切换为绘制{GetSelectedRegionText()}，预览已更新，按 U 绘制");
+            return;
+        }
+
+        SetStatus($"当前绘制模式: {GetSelectedRegionText()}，默认黑色，可在面板切换");
+    }
+
+    private bool IsTargetPixel(Image frame, int x, int y)
+    {
+        if (!IsContentPixel(x, y))
+            return false;
+
+        bool isWhite = frame.GetPixel(x, y).R > 0.5f;
+        return _drawMode == DrawRegionMode.White ? isWhite : !isWhite;
+    }
+
+    private bool IsContentPixel(int x, int y)
+        => _contentMask != null && _contentMask.GetPixel(x, y).R > 0.5f;
+
+    private string GetSelectedRegionText()
+        => _drawMode == DrawRegionMode.Black ? "黑色部分" : "白色部分";
+
+    private string GetDrawableRegionText()
+        => _drawMode == DrawRegionMode.Black ? "黑色区域" : "白色区域";
 
     private void SetStatus(string text)
     {
