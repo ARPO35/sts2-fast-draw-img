@@ -18,6 +18,7 @@ public class FastDrawImageMain
 
         try
         {
+            FastDrawShortcutConfig.Load();
             var harmony = new Harmony(HarmonyId);
             harmony.PatchAll();
             GD.Print("[FastDrawImg] Harmony 补丁注入成功");
