@@ -86,39 +86,69 @@ public class FastDrawImageMain
             if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
                 return;
 
-            if (scanner.HandleShortcutKey(keyEvent))
+            FastDrawShortcuts shortcuts = FastDrawShortcutConfig.Current;
+
+            if (shortcuts.Matches(FastDrawShortcutAction.CancelSelection, keyEvent))
             {
+                if (scanner.CancelAreaSelectionShortcut())
+                    __instance.GetViewport()?.SetInputAsHandled();
+                return;
+            }
+
+            if (shortcuts.Matches(FastDrawShortcutAction.CaptureSelectionStart, keyEvent))
+            {
+                scanner.CaptureSelectionStart();
                 __instance.GetViewport()?.SetInputAsHandled();
                 return;
             }
 
-            bool ctrl = Input.IsKeyPressed(Key.Ctrl);
-            bool shift = Input.IsKeyPressed(Key.Shift);
-
-            if (ctrl && keyEvent.Keycode == Key.U)
+            if (shortcuts.Matches(FastDrawShortcutAction.CaptureSelectionEnd, keyEvent))
             {
-                scanner.OpenImportDialog();
+                scanner.CaptureSelectionEnd();
                 __instance.GetViewport()?.SetInputAsHandled();
                 return;
             }
 
-            if (ctrl && keyEvent.Keycode == Key.V)
+            if (shortcuts.Matches(FastDrawShortcutAction.ImportImage, keyEvent))
             {
-                scanner.PasteFromClipboard();
+                if (scanner.IsSelectionModeActive)
+                    scanner.NotifySelectionModeBlocked();
+                else
+                    scanner.OpenImportDialog();
+
                 __instance.GetViewport()?.SetInputAsHandled();
                 return;
             }
 
-            if (shift && keyEvent.Keycode == Key.U)
+            if (shortcuts.Matches(FastDrawShortcutAction.PasteImagePath, keyEvent))
             {
-                scanner.ClearCurrentImage();
+                if (scanner.IsSelectionModeActive)
+                    scanner.NotifySelectionModeBlocked();
+                else
+                    scanner.PasteFromClipboard();
+
                 __instance.GetViewport()?.SetInputAsHandled();
                 return;
             }
 
-            if (keyEvent.Keycode == Key.U)
+            if (shortcuts.Matches(FastDrawShortcutAction.ClearCurrentImage, keyEvent))
             {
-                scanner.DrawCurrentImage();
+                if (scanner.IsSelectionModeActive)
+                    scanner.NotifySelectionModeBlocked();
+                else
+                    scanner.ClearCurrentImage();
+
+                __instance.GetViewport()?.SetInputAsHandled();
+                return;
+            }
+
+            if (shortcuts.Matches(FastDrawShortcutAction.DrawCurrentImage, keyEvent))
+            {
+                if (scanner.IsSelectionModeActive)
+                    scanner.NotifySelectionModeBlocked();
+                else
+                    scanner.DrawCurrentImage();
+
                 __instance.GetViewport()?.SetInputAsHandled();
             }
         }

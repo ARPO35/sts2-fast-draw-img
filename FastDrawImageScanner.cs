@@ -81,47 +81,18 @@ public partial class FastDrawImageScanner : Node2D
 
     public void OpenImportDialog() => _fileDialog.PopupCenteredRatio(0.7f);
 
-    public bool HandleShortcutKey(InputEventKey keyEvent)
+    public bool IsSelectionModeActive => _overlay.IsSelectionMode;
+
+    public void NotifySelectionModeBlocked()
+        => SetStatus("请先完成或取消区域选择");
+
+    public bool CancelAreaSelectionShortcut()
     {
-        if (!_overlay.IsSelectionMode || !keyEvent.Pressed || keyEvent.Echo)
+        if (!_overlay.IsSelectionMode)
             return false;
 
-        if (keyEvent.Keycode == Key.Escape)
-        {
-            CancelAreaSelection();
-            return true;
-        }
-
-        if (keyEvent.Keycode == Key.Bracketleft)
-        {
-            Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
-            _areaSelectionStart = point;
-            _hasAreaSelectionStart = true;
-            _overlay.SetSelectionRect(CreatePointMarker(point));
-            SetStatus($"已记录第一个角点: ({Mathf.RoundToInt(point.X)}, {Mathf.RoundToInt(point.Y)})，移动鼠标后按 ] 记录第二点");
-            return true;
-        }
-
-        if (keyEvent.Keycode == Key.Bracketright)
-        {
-            if (!_hasAreaSelectionStart)
-            {
-                SetStatus("请先把鼠标移到第一个角点后按 [");
-                return true;
-            }
-
-            Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
-            Rect2 area = MakeRect(_areaSelectionStart, point);
-            _hasAreaSelectionStart = false;
-            _overlay.CancelSelectionMode();
-            OnAreaSelected(area);
-            return true;
-        }
-
-        if (keyEvent.Keycode is Key.U or Key.V)
-            return true;
-
-        return false;
+        CancelAreaSelection();
+        return true;
     }
 
     public void PasteFromClipboard()
@@ -311,6 +282,33 @@ public partial class FastDrawImageScanner : Node2D
     {
         if (files != null && files.Length > 0)
             TryLoadImage(files[0]);
+    }
+
+    public void CaptureSelectionStart()
+    {
+        if (!_overlay.IsSelectionMode)
+            _overlay.EnterSelectionMode();
+
+        Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
+        _areaSelectionStart = point;
+        _hasAreaSelectionStart = true;
+        _overlay.SetSelectionRect(CreatePointMarker(point));
+        SetStatus($"已记录第一个角点: ({Mathf.RoundToInt(point.X)}, {Mathf.RoundToInt(point.Y)})，移动鼠标后按 ] 记录第二点");
+    }
+
+    public void CaptureSelectionEnd()
+    {
+        if (!_overlay.IsSelectionMode || !_hasAreaSelectionStart)
+        {
+            SetStatus("请先把鼠标移到第一个角点后按 [");
+            return;
+        }
+
+        Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
+        Rect2 area = MakeRect(_areaSelectionStart, point);
+        _hasAreaSelectionStart = false;
+        _overlay.CancelSelectionMode();
+        OnAreaSelected(area);
     }
 
     private void StartAreaSelection()
