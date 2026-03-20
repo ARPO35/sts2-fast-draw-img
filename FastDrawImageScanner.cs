@@ -44,6 +44,8 @@ public partial class FastDrawImageScanner : Node2D
     private ulong? _localPlayerId;
     private bool _dropConnected;
     private bool _previewVisible;
+    private bool _isAreaDragActive;
+    private Vector2 _areaDragStart;
     private Rect2 _drawArea = DefaultDrawArea;
     private DrawRegionMode _drawMode = DrawRegionMode.Black;
 
@@ -92,6 +94,54 @@ public partial class FastDrawImageScanner : Node2D
 
         if (keyEvent.Keycode is Key.U or Key.V)
             return true;
+
+        return false;
+    }
+
+    public bool HandleSelectionPointerInput(InputEvent @event)
+    {
+        if (!_overlay.IsSelectionMode)
+            return false;
+
+        if (@event is InputEventMouseButton mouseButton)
+        {
+            Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
+
+            if (mouseButton.ButtonIndex == MouseButton.Left)
+            {
+                if (mouseButton.Pressed)
+                {
+                    _isAreaDragActive = true;
+                    _areaDragStart = point;
+                    _overlay.SetSelectionRect(new Rect2(point, Vector2.Zero));
+                    return true;
+                }
+
+                if (_isAreaDragActive)
+                {
+                    _isAreaDragActive = false;
+                    Rect2 area = MakeRect(_areaDragStart, point);
+                    _overlay.CancelSelectionMode();
+                    OnAreaSelected(area);
+                    return true;
+                }
+            }
+
+            if (mouseButton.Pressed && mouseButton.ButtonIndex == MouseButton.Right)
+            {
+                CancelAreaSelection();
+                return true;
+            }
+
+            return false;
+        }
+
+        if (@event is InputEventMouseMotion && _isAreaDragActive)
+        {
+            Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
+            _overlay.SetSelectionRect(MakeRect(_areaDragStart, point));
+            return true;
+        }
 
         return false;
     }
@@ -194,7 +244,6 @@ public partial class FastDrawImageScanner : Node2D
         _mapDrawings.Resized += OnMapDrawingsResized;
 
         _overlay.SetDrawArea(_drawArea);
-        _overlay.AreaSelected += OnAreaSelected;
         _overlay.SelectionCanceled += OnAreaSelectionCanceled;
         _overlay.MoveToFront();
     }
@@ -288,12 +337,14 @@ public partial class FastDrawImageScanner : Node2D
 
     private void StartAreaSelection()
     {
+        _isAreaDragActive = false;
         _overlay.EnterSelectionMode();
         SetStatus("左键拖拽选择绘制区域，右键或 Esc 取消");
     }
 
     private void CancelAreaSelection()
     {
+        _isAreaDragActive = false;
         _overlay.CancelSelectionMode();
         SetStatus("已取消区域选择");
     }
@@ -613,6 +664,18 @@ public partial class FastDrawImageScanner : Node2D
         list.Add((start, end));
     }
 
+    private Vector2 ClampToDrawings(Vector2 point)
+        => new(Mathf.Clamp(point.X, 0f, _mapDrawings.Size.X), Mathf.Clamp(point.Y, 0f, _mapDrawings.Size.Y));
+
+    private static Rect2 MakeRect(Vector2 start, Vector2 end)
+    {
+        float minX = Mathf.Min(start.X, end.X);
+        float minY = Mathf.Min(start.Y, end.Y);
+        float maxX = Mathf.Max(start.X, end.X);
+        float maxY = Mathf.Max(start.Y, end.Y);
+        return new Rect2(minX, minY, maxX - minX, maxY - minY);
+    }
+
     private void ResetPreviewState(string status, bool forgetLoadedImage = false)
     {
         if (forgetLoadedImage)
@@ -626,6 +689,7 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         _previewVisible = false;
+        _isAreaDragActive = false;
         _overlay.SetPreviewVisible(false);
         SetStatus(status);
     }
