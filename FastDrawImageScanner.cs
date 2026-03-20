@@ -66,6 +66,7 @@ public partial class FastDrawImageScanner : Node2D
         BuildUi();
         TryConnectFileDrop();
         Visible = true;
+        FastDrawLog.Debug($"Scanner initialized: mapSize={FormatVector(_mapDrawings.Size)}, drawArea={FormatRect(_drawArea)}, drawColor={_drawColor}");
         SetStatus(BuildShortcutSummary());
     }
 
@@ -211,6 +212,7 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         text = text.Trim('"');
+        FastDrawLog.Debug($"从剪贴板读取路径: {text}");
         if (!TryLoadImage(text))
             SetStatus("剪贴板内容不是可读取的图片路径");
     }
@@ -262,6 +264,7 @@ public partial class FastDrawImageScanner : Node2D
         UpdatePreviewTexture();
         _previewVisible = true;
         _overlay.SetPreviewVisible(true);
+        FastDrawLog.Debug($"开始绘制当前图像: drawArea={FormatRect(_drawArea)}, binarySize={GetImageSizeText(_binaryImage)}, drawMode={_drawMode}");
 
         DrawDispatchResult result = SendImageToNetwork();
         if (result == DrawDispatchResult.Failed)
@@ -299,10 +302,12 @@ public partial class FastDrawImageScanner : Node2D
                 _drawColor = player.Character.MapDrawingColor;
 
             _drawColor.A = 1f;
+            FastDrawLog.Debug($"解析绘制颜色成功: playerId={_localPlayerId}, color={_drawColor}");
         }
         catch
         {
             _drawColor = Colors.White;
+            FastDrawLog.Debug("解析绘制颜色失败，回退为白色");
         }
     }
 
@@ -332,6 +337,7 @@ public partial class FastDrawImageScanner : Node2D
         _overlay.Size = _mapDrawings.Size;
         _overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         _overlay.QueueRedraw();
+        FastDrawLog.Debug($"同步覆盖层布局: mapSize={FormatVector(_mapDrawings.Size)}");
     }
 
     private void BuildUi()
@@ -405,7 +411,10 @@ public partial class FastDrawImageScanner : Node2D
     private void OnFilesDropped(string[] files)
     {
         if (files != null && files.Length > 0)
+        {
+            FastDrawLog.Debug($"拖入文件: {string.Join(", ", files)}");
             TryLoadImage(files[0]);
+        }
     }
 
     public void CaptureSelectionStart()
@@ -495,6 +504,7 @@ public partial class FastDrawImageScanner : Node2D
         }
         catch (Exception ex)
         {
+            FastDrawLog.Error($"载入图像失败 path={path}", ex);
             SetStatus("载入失败: " + ex.Message);
             return false;
         }
@@ -517,6 +527,7 @@ public partial class FastDrawImageScanner : Node2D
             _previewVisible = false;
             _overlay.SetPreviewTexture(null);
             _overlay.SetPreviewVisible(false);
+            FastDrawLog.Debug("刷新渲染图像时 source 为空，已清空预览");
             return;
         }
 
@@ -524,6 +535,7 @@ public partial class FastDrawImageScanner : Node2D
         _previewVisible = showPreview;
         UpdatePreviewTexture();
         _overlay.SetPreviewVisible(_previewVisible);
+        FastDrawLog.Debug($"刷新渲染图像: source={GetImageSizeText(_sourceImage)}, binary={GetImageSizeText(_binaryImage)}, drawArea={FormatRect(_drawArea)}, previewVisible={_previewVisible}, drawablePixels={CountDrawablePixels(_binaryImage)}");
     }
 
     private Image PrepareBinaryImage(Image image)
@@ -533,6 +545,7 @@ public partial class FastDrawImageScanner : Node2D
         Image work = CreateFittedBinaryCanvas(image, renderSize, out Image contentMask);
         _contentMask = contentMask;
         ApplyBinaryThreshold(work);
+        FastDrawLog.Debug($"二值化前景像素统计: contentPixels={CountMaskPixels(contentMask)}");
         return ApplyMorphologicalClose(work);
     }
 
@@ -641,6 +654,7 @@ public partial class FastDrawImageScanner : Node2D
         if (_binaryImage == null)
         {
             _overlay.SetPreviewTexture(null);
+            FastDrawLog.Debug("更新预览贴图时 binary 为空");
             return;
         }
 
@@ -659,13 +673,19 @@ public partial class FastDrawImageScanner : Node2D
             _previewTex.Update(preview);
 
         _overlay.SetPreviewTexture(_previewTex);
+        FastDrawLog.Debug($"预览贴图已更新: size={width}x{height}, drawablePixels={CountDrawablePixels(_binaryImage)}");
     }
 
     private void SendClearToNetwork()
     {
         var ns = RunManager.Instance?.NetService;
         if (ns == null || ns.Type == NetGameType.Singleplayer)
+        {
+            FastDrawLog.Debug($"跳过清空网络绘制: netService={(ns == null ? "null" : ns.Type.ToString())}");
             return;
+        }
+
+        FastDrawLog.Debug("发送 ClearMapDrawingsMessage");
         ns.SendMessage(default(ClearMapDrawingsMessage));
     }
 
@@ -850,6 +870,40 @@ public partial class FastDrawImageScanner : Node2D
         GD.Print("[FastDrawImg] " + text);
         FastDrawLog.Debug("状态更新: " + text);
     }
+
+    private int CountDrawablePixels(Image? image)
+    {
+        if (image == null)
+            return 0;
+
+        int count = 0;
+        for (int y = 0; y < image.GetHeight(); y++)
+        for (int x = 0; x < image.GetWidth(); x++)
+            if (IsTargetPixel(image, x, y))
+                count++;
+
+        return count;
+    }
+
+    private static int CountMaskPixels(Image image)
+    {
+        int count = 0;
+        for (int y = 0; y < image.GetHeight(); y++)
+        for (int x = 0; x < image.GetWidth(); x++)
+            if (image.GetPixel(x, y).R > 0.5f)
+                count++;
+
+        return count;
+    }
+
+    private static string GetImageSizeText(Image? image)
+        => image == null ? "null" : $"{image.GetWidth()}x{image.GetHeight()}";
+
+    private static string FormatRect(Rect2 rect)
+        => $"({rect.Position.X:0.##}, {rect.Position.Y:0.##}, {rect.Size.X:0.##}, {rect.Size.Y:0.##})";
+
+    private static string FormatVector(Vector2 vector)
+        => $"({vector.X:0.##}, {vector.Y:0.##})";
 
     private static string DescribeKeyEvent(InputEventKey keyEvent)
         => $"keycode={keyEvent.Keycode}, keyLabel={keyEvent.KeyLabel}, physicalKeycode={keyEvent.PhysicalKeycode}, ctrl={keyEvent.CtrlPressed}, shift={keyEvent.ShiftPressed}, alt={keyEvent.AltPressed}, unicode={keyEvent.Unicode}";
