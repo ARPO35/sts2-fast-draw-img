@@ -31,6 +31,7 @@ public partial class FastDrawImageScanner : Node2D
     private Color _drawColor = Colors.White;
     private Image? _binaryImage;
     private string? _currentImagePath;
+    private ulong? _localPlayerId;
     private bool _dropConnected;
 
     public void Initialize(NMapDrawings drawings)
@@ -86,6 +87,14 @@ public partial class FastDrawImageScanner : Node2D
         ResetPreviewState("地图绘制已清空，按 U 可重绘当前图像");
     }
 
+    public void OnPlayerMapCleared(ulong playerId)
+    {
+        if (!_localPlayerId.HasValue || _localPlayerId.Value != playerId)
+            return;
+
+        OnMapCleared();
+    }
+
     public void DrawCurrentImage()
     {
         if (_binaryImage == null)
@@ -110,7 +119,8 @@ public partial class FastDrawImageScanner : Node2D
             dynamic? pc = pcField?.GetValue(_mapDrawings);
             if (ns != null && pc != null)
             {
-                var player = pc.GetPlayer((ulong)ns.NetId);
+                _localPlayerId = (ulong)ns.NetId;
+                var player = pc.GetPlayer(_localPlayerId.Value);
                 if (player != null)
                     _drawColor = player.Character.MapDrawingColor;
             }

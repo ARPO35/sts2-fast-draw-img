@@ -1,5 +1,6 @@
 using Godot;
 using HarmonyLib;
+using System.Reflection;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using FastDrawImg.Patches;
@@ -30,6 +31,15 @@ public class FastDrawImageMain
     private static FastDrawImageScanner? GetScanner(NMapDrawings drawings)
         => drawings.GetNodeOrNull<FastDrawImageScanner>(FastDrawImageScanner.NodeName);
 
+    private static ulong? TryGetPlayerId(object? state)
+    {
+        if (state == null)
+            return null;
+
+        var playerIdField = state.GetType().GetField("playerId", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return playerIdField?.GetValue(state) is ulong playerId ? playerId : null;
+    }
+
     [HarmonyPatch(typeof(NMapDrawings), "_Ready")]
     private static class MapDrawingsReadyPatch
     {
@@ -55,8 +65,12 @@ public class FastDrawImageMain
     [HarmonyPatch(typeof(NMapDrawings), "ClearAllLinesForPlayer")]
     private static class MapDrawingsClearAllLinesForPlayerPatch
     {
-        public static void Postfix(NMapDrawings __instance)
-            => GetScanner(__instance)?.OnMapCleared();
+        public static void Postfix(NMapDrawings __instance, object state)
+        {
+            var playerId = TryGetPlayerId(state);
+            if (playerId.HasValue)
+                GetScanner(__instance)?.OnPlayerMapCleared(playerId.Value);
+        }
     }
 
     [HarmonyPatch(typeof(NMapDrawings), "_UnhandledInput")]
