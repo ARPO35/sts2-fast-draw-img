@@ -216,7 +216,7 @@ public partial class FastDrawImageScanner : Node2D
 
         var panel = new PanelContainer();
         panel.Position = new Vector2(24, 24);
-        panel.Size = new Vector2(480, 160);
+        panel.Size = new Vector2(400, 160);
 
         var vbox = new VBoxContainer();
         panel.AddChild(vbox);
@@ -243,10 +243,6 @@ public partial class FastDrawImageScanner : Node2D
         var importButton = new Button { Text = "导入图像" };
         importButton.Pressed += OpenImportDialog;
         buttonRow.AddChild(importButton);
-
-        var selectAreaButton = new Button { Text = "选择区域" };
-        selectAreaButton.Pressed += StartAreaSelection;
-        buttonRow.AddChild(selectAreaButton);
 
         var drawButton = new Button { Text = "绘制当前图像" };
         drawButton.Pressed += DrawCurrentImage;
@@ -305,17 +301,10 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
-        Rect2 area = MakeRect(_areaSelectionStart, point);
+        Vector2 startPoint = _areaSelectionStart;
         _hasAreaSelectionStart = false;
         _overlay.CancelSelectionMode();
-        OnAreaSelected(area);
-    }
-
-    private void StartAreaSelection()
-    {
-        _hasAreaSelectionStart = false;
-        _overlay.EnterSelectionMode();
-        SetStatus($"移动鼠标到第一个角点按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionStart)}，再移动到第二个角点按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)}，{GetShortcutText(FastDrawShortcutAction.CancelSelection)} 取消");
+        ApplySelectedArea(startPoint, point);
     }
 
     private void CancelAreaSelection()
@@ -327,11 +316,12 @@ public partial class FastDrawImageScanner : Node2D
 
     private void OnAreaSelectionCanceled() => SetStatus("已取消区域选择");
 
-    private void OnAreaSelected(Rect2 area)
+    private void ApplySelectedArea(Vector2 startPoint, Vector2 endPoint)
     {
+        Rect2 area = MakeRect(startPoint, endPoint);
         if (area.Size.X < MinDrawAreaSize || area.Size.Y < MinDrawAreaSize)
         {
-            SetStatus("选区太小，至少需要 16x16");
+            SetStatus($"选区太小: ({Mathf.RoundToInt(startPoint.X)}, {Mathf.RoundToInt(startPoint.Y)}) -> ({Mathf.RoundToInt(endPoint.X)}, {Mathf.RoundToInt(endPoint.Y)})，至少需要 16x16");
             _overlay.SetDrawArea(_drawArea);
             return;
         }
@@ -341,7 +331,7 @@ public partial class FastDrawImageScanner : Node2D
         if (_sourceImage != null)
             RefreshRenderedImage(_previewVisible);
 
-        SetStatus($"已更新绘制区域: {Mathf.RoundToInt(area.Size.X)}x{Mathf.RoundToInt(area.Size.Y)}");
+        SetStatus($"已更新绘制区域: ({Mathf.RoundToInt(startPoint.X)}, {Mathf.RoundToInt(startPoint.Y)}) -> ({Mathf.RoundToInt(endPoint.X)}, {Mathf.RoundToInt(endPoint.Y)})，尺寸 {Mathf.RoundToInt(area.Size.X)}x{Mathf.RoundToInt(area.Size.Y)}");
     }
 
     private void OnFileSelected(string path) => TryLoadImage(path);
@@ -714,7 +704,7 @@ public partial class FastDrawImageScanner : Node2D
         => FastDrawShortcutConfig.Current.Describe(action);
 
     private string BuildShortcutSummary()
-        => $"{GetShortcutText(FastDrawShortcutAction.ImportImage)} 导入图片 / {GetShortcutText(FastDrawShortcutAction.PasteImagePath)} 粘贴路径 / {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 重绘 / {GetShortcutText(FastDrawShortcutAction.ClearCurrentImage)} 清空 / 选择区域后用 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionStart)} 和 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)} 取两点";
+        => $"{GetShortcutText(FastDrawShortcutAction.ImportImage)} 导入图片 / {GetShortcutText(FastDrawShortcutAction.PasteImagePath)} 粘贴路径 / {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 重绘 / {GetShortcutText(FastDrawShortcutAction.ClearCurrentImage)} 清空 / 用 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionStart)} 和 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)} 记录选区两点";
 
     private void SetStatus(string text)
     {
