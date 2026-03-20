@@ -13,6 +13,13 @@ namespace FastDrawImg.Patches;
 
 public partial class FastDrawImageScanner : Node2D
 {
+    private enum DrawDispatchResult
+    {
+        Failed = 0,
+        PreviewOnly = 1,
+        NetworkSent = 2
+    }
+
     private enum DrawRegionMode
     {
         Black = 0,
@@ -45,6 +52,7 @@ public partial class FastDrawImageScanner : Node2D
     private bool _dropConnected;
     private bool _previewVisible;
     private bool _hasAreaSelectionStart;
+    private bool _suppressNextMapClearReset;
     private Vector2 _areaSelectionStart;
     private Rect2 _drawArea = DefaultDrawArea;
     private DrawRegionMode _drawMode = DrawRegionMode.Black;
@@ -215,9 +223,17 @@ public partial class FastDrawImageScanner : Node2D
 
     public void OnMapCleared()
     {
+        if (_suppressNextMapClearReset)
+        {
+            _suppressNextMapClearReset = false;
+            FastDrawLog.Debug("忽略一次由重绘流程触发的地图清空回调");
+            return;
+        }
+
         if (_binaryImage == null && !_previewVisible)
             return;
 
+        FastDrawLog.Debug("处理地图清空回调，重置当前预览状态");
         ResetPreviewState($"地图绘制已清空，当前绘制{GetSelectedRegionText()}，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 可重绘当前图像");
     }
 
@@ -247,10 +263,18 @@ public partial class FastDrawImageScanner : Node2D
         _previewVisible = true;
         _overlay.SetPreviewVisible(true);
 
-        if (!SendImageToNetwork())
+        DrawDispatchResult result = SendImageToNetwork();
+        if (result == DrawDispatchResult.Failed)
             return;
 
-        SetStatus($"已绘制{GetSelectedRegionText()}: {(_currentImagePath ?? "剪贴板路径")}");
+        string source = _currentImagePath ?? "剪贴板路径";
+        if (result == DrawDispatchResult.PreviewOnly)
+        {
+            SetStatus($"已更新预览{GetSelectedRegionText()}，当前模式不会发送地图绘制: {source}");
+            return;
+        }
+
+        SetStatus($"已绘制{GetSelectedRegionText()}: {source}");
     }
 
     private void ResolvePlayerDrawColor()
@@ -462,6 +486,7 @@ public partial class FastDrawImageScanner : Node2D
             if (image == null || image.IsEmpty())
                 return false;
 
+            FastDrawLog.Debug($"载入图像: path={path}, size={image.GetWidth()}x{image.GetHeight()}, format={image.GetFormat()}");
             _currentImagePath = path;
             _sourceImage = PrepareSourceImage(image);
             RefreshRenderedImage(showPreview: true);
@@ -504,6 +529,7 @@ public partial class FastDrawImageScanner : Node2D
     private Image PrepareBinaryImage(Image image)
     {
         Vector2I renderSize = CalculateRenderSize(_drawArea.Size);
+        FastDrawLog.Debug($"重采样图像: source={image.GetWidth()}x{image.GetHeight()}, render={renderSize.X}x{renderSize.Y}, drawArea={_drawArea}");
         Image work = CreateFittedBinaryCanvas(image, renderSize, out Image contentMask);
         _contentMask = contentMask;
         ApplyBinaryThreshold(work);
@@ -643,22 +669,27 @@ public partial class FastDrawImageScanner : Node2D
         ns.SendMessage(default(ClearMapDrawingsMessage));
     }
 
-    private bool SendImageToNetwork()
+    private DrawDispatchResult SendImageToNetwork()
     {
         if (_binaryImage == null)
-            return false;
+            return DrawDispatchResult.Failed;
 
         var ns = RunManager.Instance?.NetService;
         if (ns == null || ns.Type == NetGameType.Singleplayer)
-            return true;
+        {
+            FastDrawLog.Debug($"跳过网络绘制: netService={(ns == null ? "null" : ns.Type.ToString())}, previewVisible={_previewVisible}");
+            return DrawDispatchResult.PreviewOnly;
+        }
 
         var segments = BuildSegments(_binaryImage);
         if (segments.Count == 0)
         {
             SetStatus($"图像里没有可绘制的{GetDrawableRegionText()}");
-            return false;
+            return DrawDispatchResult.Failed;
         }
 
+        FastDrawLog.Debug($"发送网络绘制: segments={segments.Count}, drawArea={_drawArea}, mapSize={_mapDrawings.Size}, firstSegment={(segments.Count > 0 ? $"{segments[0].start} -> {segments[0].end}" : "none")}");
+        _suppressNextMapClearReset = true;
         ns.SendMessage(default(ClearMapDrawingsMessage));
 
         var msg = new MapDrawingMessage { drawingMode = DrawingMode.Drawing };
@@ -672,7 +703,7 @@ public partial class FastDrawImageScanner : Node2D
         if (msg.Events.Count > 0)
             ns.SendMessage(msg);
 
-        return true;
+        return DrawDispatchResult.NetworkSent;
     }
 
     private List<(Vector2 start, Vector2 end)> BuildSegments(Image frame)
