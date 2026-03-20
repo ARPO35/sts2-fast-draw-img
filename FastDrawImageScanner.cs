@@ -14,9 +14,12 @@ namespace FastDrawImg.Patches;
 public partial class FastDrawImageScanner : Node2D
 {
     public const string NodeName = "FastDrawImageScanner";
+    private const float MinDrawAreaSize = 16f;
+    private static readonly Rect2 DefaultDrawArea = new(new Vector2(120f, 80f), new Vector2(640f, 480f));
 
     private NMapDrawings _mapDrawings = null!;
     private Sprite2D _previewSprite = null!;
+    private DrawAreaOverlay _overlay = null!;
     private ImageTexture? _previewTex;
     private FileDialog _fileDialog = null!;
     private CanvasLayer _uiLayer = null!;
@@ -33,16 +36,18 @@ public partial class FastDrawImageScanner : Node2D
     private string? _currentImagePath;
     private ulong? _localPlayerId;
     private bool _dropConnected;
+    private Rect2 _drawArea = DefaultDrawArea;
 
     public void Initialize(NMapDrawings drawings)
     {
         _mapDrawings = drawings;
         ResolvePlayerDrawColor();
         BuildPreview();
+        BuildOverlay();
         BuildUi();
         TryConnectFileDrop();
         Visible = true;
-        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空");
+        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空 / 选择区域重框");
     }
 
     public override void _ExitTree()
@@ -54,10 +59,31 @@ public partial class FastDrawImageScanner : Node2D
                 window.FilesDropped -= OnFilesDropped;
             _dropConnected = false;
         }
+
+        if (IsInstanceValid(_overlay))
+            _overlay.QueueFree();
+
         base._ExitTree();
     }
 
     public void OpenImportDialog() => _fileDialog.PopupCenteredRatio(0.7f);
+
+    public bool HandleShortcutKey(InputEventKey keyEvent)
+    {
+        if (!_overlay.IsSelectionMode)
+            return false;
+
+        if (keyEvent.Keycode == Key.Escape)
+        {
+            CancelAreaSelection();
+            return true;
+        }
+
+        if (keyEvent.Keycode is Key.U or Key.V)
+            return true;
+
+        return false;
+    }
 
     public void PasteFromClipboard()
     {
@@ -97,6 +123,12 @@ public partial class FastDrawImageScanner : Node2D
 
     public void DrawCurrentImage()
     {
+        if (_overlay.IsSelectionMode)
+        {
+            SetStatus("请先完成或取消区域选择");
+            return;
+        }
+
         if (_binaryImage == null)
         {
             SetStatus("还没有载入图像");
@@ -143,6 +175,19 @@ public partial class FastDrawImageScanner : Node2D
         AddChild(_previewSprite);
     }
 
+    private void BuildOverlay()
+    {
+        _overlay = new DrawAreaOverlay
+        {
+            Name = "FastDrawDrawAreaOverlay"
+        };
+        _overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _overlay.DrawArea = _drawArea;
+        _overlay.AreaSelected += OnAreaSelected;
+        _overlay.SelectionCanceled += OnAreaSelectionCanceled;
+        _mapDrawings.AddChild(_overlay);
+    }
+
     private void BuildUi()
     {
         _uiLayer = new CanvasLayer();
@@ -163,6 +208,10 @@ public partial class FastDrawImageScanner : Node2D
         var importButton = new Button { Text = "导入图像" };
         importButton.Pressed += OpenImportDialog;
         buttonRow.AddChild(importButton);
+
+        var selectAreaButton = new Button { Text = "选择区域" };
+        selectAreaButton.Pressed += StartAreaSelection;
+        buttonRow.AddChild(selectAreaButton);
 
         var drawButton = new Button { Text = "绘制当前图像" };
         drawButton.Pressed += DrawCurrentImage;
@@ -198,6 +247,36 @@ public partial class FastDrawImageScanner : Node2D
     {
         if (files != null && files.Length > 0)
             TryLoadImage(files[0]);
+    }
+
+    private void StartAreaSelection()
+    {
+        _overlay.EnterSelectionMode();
+        SetStatus("左键拖拽选择绘制区域，右键或 Esc 取消");
+    }
+
+    private void CancelAreaSelection()
+    {
+        _overlay.CancelSelectionMode();
+        SetStatus("已取消区域选择");
+    }
+
+    private void OnAreaSelectionCanceled() => SetStatus("已取消区域选择");
+
+    private void OnAreaSelected(Rect2 area)
+    {
+        if (area.Size.X < MinDrawAreaSize || area.Size.Y < MinDrawAreaSize)
+        {
+            SetStatus("选区太小，至少需要 16x16");
+            _overlay.DrawArea = _drawArea;
+            _overlay.QueueRedraw();
+            return;
+        }
+
+        _drawArea = area;
+        _overlay.DrawArea = _drawArea;
+        _overlay.QueueRedraw();
+        SetStatus($"已更新绘制区域: {Mathf.RoundToInt(area.Size.X)}x{Mathf.RoundToInt(area.Size.Y)}");
     }
 
     private void OnFileSelected(string path) => TryLoadImage(path);

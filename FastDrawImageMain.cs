@@ -85,6 +85,12 @@ public class FastDrawImageMain
             if (scanner == null)
                 return;
 
+            if (scanner.HandleShortcutKey(keyEvent))
+            {
+                __instance.GetViewport()?.SetInputAsHandled();
+                return;
+            }
+
             bool ctrl = Input.IsKeyPressed(Key.Ctrl);
             bool shift = Input.IsKeyPressed(Key.Shift);
 
