@@ -2,9 +2,10 @@
   "id": "FastDrawImg",
   "name": "Fast Draw Image",
   "author": "leddele, Boninall",
-  "version": "1.2.0",
   "description": "Ctrl+U 导入图片，Ctrl+V 粘贴路径，U 绘制当前图片，Shift+U 清空。",
-  "entry_point": "FastDrawImg.FastDrawImageMain",
-  "dll_name": "FastDrawImg.dll",
-  "pck_name": "FastDrawImg"
+  "version": "1.2.0",
+  "has_pck": true,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": true
 }

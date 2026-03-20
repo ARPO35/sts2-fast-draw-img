@@ -12,6 +12,7 @@
         <GodotPath Condition="'$(GodotPath)' == ''">V:\应用\Godot_v4.6.1-stable_mono_win64\Godot_v4.6.1-stable_mono_win64.exe</GodotPath>
         <GodotApiDir Condition="'$(GodotApiDir)' == ''">V:\应用\Godot_v4.6.1-stable_mono_win64\GodotSharp\Api\Release</GodotApiDir>
         <ModFolderName Condition="'$(ModFolderName)' == ''">FastDrawImg</ModFolderName>
+        <ModMetadataFile Condition="'$(ModMetadataFile)' == ''">$(MSBuildProjectName).json</ModMetadataFile>
     </PropertyGroup>
 
     <ItemGroup>
@@ -33,7 +34,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Include="mod_manifest.json" />
+        <None Include="$(ModMetadataFile)" />
         <None Include="project.godot" />
     </ItemGroup>
 
@@ -51,7 +52,7 @@
         <Message Text=">>> 正在部署图片绘制 Mod 到: $(DestDir)" Importance="high" />
         <MakeDir Directories="$(DestDir)" />
         <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DestDir)" />
-        <Copy SourceFiles="mod_manifest.json" DestinationFolder="$(DestDir)" Condition="Exists('mod_manifest.json')" />
+        <Copy SourceFiles="$(ModMetadataFile)" DestinationFolder="$(DestDir)" Condition="Exists('$(ModMetadataFile)')" />
     </Target>
 
     <Target Name="GodotPublish" AfterTargets="Publish" Condition="'$(GodotPath)' != '' and Exists('$(GodotPath)')">
