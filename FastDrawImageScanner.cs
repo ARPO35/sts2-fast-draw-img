@@ -57,7 +57,7 @@ public partial class FastDrawImageScanner : Node2D
         BuildUi();
         TryConnectFileDrop();
         Visible = true;
-        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空 / 选择区域后用 [ 和 ] 取两点，默认绘制黑色部分");
+        SetStatus(BuildShortcutSummary());
     }
 
     public override void _ExitTree()
@@ -120,7 +120,7 @@ public partial class FastDrawImageScanner : Node2D
         if (_binaryImage == null && !_previewVisible)
             return;
 
-        ResetPreviewState($"地图绘制已清空，当前绘制{GetSelectedRegionText()}，按 U 可重绘当前图像");
+        ResetPreviewState($"地图绘制已清空，当前绘制{GetSelectedRegionText()}，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 可重绘当前图像");
     }
 
     public void OnPlayerMapCleared(ulong playerId)
@@ -293,14 +293,14 @@ public partial class FastDrawImageScanner : Node2D
         _areaSelectionStart = point;
         _hasAreaSelectionStart = true;
         _overlay.SetSelectionRect(CreatePointMarker(point));
-        SetStatus($"已记录第一个角点: ({Mathf.RoundToInt(point.X)}, {Mathf.RoundToInt(point.Y)})，移动鼠标后按 ] 记录第二点");
+        SetStatus($"已记录第一个角点: ({Mathf.RoundToInt(point.X)}, {Mathf.RoundToInt(point.Y)})，移动鼠标后按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)} 记录第二点");
     }
 
     public void CaptureSelectionEnd()
     {
         if (!_overlay.IsSelectionMode || !_hasAreaSelectionStart)
         {
-            SetStatus("请先把鼠标移到第一个角点后按 [");
+            SetStatus($"请先把鼠标移到第一个角点后按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionStart)}");
             return;
         }
 
@@ -315,7 +315,7 @@ public partial class FastDrawImageScanner : Node2D
     {
         _hasAreaSelectionStart = false;
         _overlay.EnterSelectionMode();
-        SetStatus("移动鼠标到第一个角点按 [，再移动到第二个角点按 ]，Esc 取消");
+        SetStatus($"移动鼠标到第一个角点按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionStart)}，再移动到第二个角点按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)}，{GetShortcutText(FastDrawShortcutAction.CancelSelection)} 取消");
     }
 
     private void CancelAreaSelection()
@@ -368,7 +368,7 @@ public partial class FastDrawImageScanner : Node2D
             _currentImagePath = path;
             _sourceImage = PrepareSourceImage(image);
             RefreshRenderedImage(showPreview: true);
-            SetStatus($"已载入: {Path.GetFileName(path)}，当前绘制{GetSelectedRegionText()}，按 U 绘制");
+            SetStatus($"已载入: {Path.GetFileName(path)}，当前绘制{GetSelectedRegionText()}，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 绘制");
             return true;
         }
         catch (Exception ex)
@@ -685,7 +685,7 @@ public partial class FastDrawImageScanner : Node2D
             UpdatePreviewTexture();
             _previewVisible = true;
             _overlay.SetPreviewVisible(true);
-            SetStatus($"已切换为绘制{GetSelectedRegionText()}，预览已更新，按 U 绘制");
+            SetStatus($"已切换为绘制{GetSelectedRegionText()}，预览已更新，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 绘制");
             return;
         }
 
@@ -709,6 +709,12 @@ public partial class FastDrawImageScanner : Node2D
 
     private string GetDrawableRegionText()
         => _drawMode == DrawRegionMode.Black ? "黑色区域" : "白色区域";
+
+    private string GetShortcutText(FastDrawShortcutAction action)
+        => FastDrawShortcutConfig.Current.Describe(action);
+
+    private string BuildShortcutSummary()
+        => $"{GetShortcutText(FastDrawShortcutAction.ImportImage)} 导入图片 / {GetShortcutText(FastDrawShortcutAction.PasteImagePath)} 粘贴路径 / {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 重绘 / {GetShortcutText(FastDrawShortcutAction.ClearCurrentImage)} 清空 / 选择区域后用 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionStart)} 和 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)} 取两点";
 
     private void SetStatus(string text)
     {
