@@ -66,10 +66,16 @@ public partial class FastDrawImageScanner : Node2D
         if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
             return;
 
-        if (_fileDialog != null && _fileDialog.Visible)
+        if (ShouldIgnoreShortcutInput(out string context))
+        {
+            FastDrawLog.Debug($"忽略按键输入: {DescribeKeyEvent(keyEvent)}, context={context}");
             return;
+        }
 
-        HandleShortcutKey(keyEvent);
+        FastDrawLog.Debug($"收到按键输入: {DescribeKeyEvent(keyEvent)}, context={context}");
+
+        if (HandleShortcutKey(keyEvent))
+            GetViewport()?.SetInputAsHandled();
     }
 
     public override void _ExitTree()
@@ -112,22 +118,28 @@ public partial class FastDrawImageScanner : Node2D
         FastDrawShortcuts shortcuts = FastDrawShortcutConfig.Current;
 
         if (shortcuts.Matches(FastDrawShortcutAction.CancelSelection, keyEvent))
+        {
+            FastDrawLog.Debug("匹配快捷键: cancelSelection");
             return CancelAreaSelectionShortcut();
+        }
 
         if (shortcuts.Matches(FastDrawShortcutAction.CaptureSelectionStart, keyEvent))
         {
+            FastDrawLog.Debug("匹配快捷键: captureSelectionStart");
             CaptureSelectionStart();
             return true;
         }
 
         if (shortcuts.Matches(FastDrawShortcutAction.CaptureSelectionEnd, keyEvent))
         {
+            FastDrawLog.Debug("匹配快捷键: captureSelectionEnd");
             CaptureSelectionEnd();
             return true;
         }
 
         if (shortcuts.Matches(FastDrawShortcutAction.ImportImage, keyEvent))
         {
+            FastDrawLog.Debug("匹配快捷键: importImage");
             if (_overlay.IsSelectionMode)
                 NotifySelectionModeBlocked();
             else
@@ -138,6 +150,7 @@ public partial class FastDrawImageScanner : Node2D
 
         if (shortcuts.Matches(FastDrawShortcutAction.PasteImagePath, keyEvent))
         {
+            FastDrawLog.Debug("匹配快捷键: pasteImagePath");
             if (_overlay.IsSelectionMode)
                 NotifySelectionModeBlocked();
             else
@@ -148,6 +161,7 @@ public partial class FastDrawImageScanner : Node2D
 
         if (shortcuts.Matches(FastDrawShortcutAction.ClearCurrentImage, keyEvent))
         {
+            FastDrawLog.Debug("匹配快捷键: clearCurrentImage");
             if (_overlay.IsSelectionMode)
                 NotifySelectionModeBlocked();
             else
@@ -158,6 +172,7 @@ public partial class FastDrawImageScanner : Node2D
 
         if (shortcuts.Matches(FastDrawShortcutAction.DrawCurrentImage, keyEvent))
         {
+            FastDrawLog.Debug("匹配快捷键: drawCurrentImage");
             if (_overlay.IsSelectionMode)
                 NotifySelectionModeBlocked();
             else
@@ -167,6 +182,15 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         return false;
+    }
+
+    private bool ShouldIgnoreShortcutInput(out string context)
+    {
+        Control? focusOwner = GetViewport()?.GuiGetFocusOwner();
+        bool fileDialogVisible = _fileDialog != null && _fileDialog.Visible;
+        bool textInputFocused = focusOwner is LineEdit or TextEdit;
+        context = $"selectionMode={_overlay.IsSelectionMode}, fileDialogVisible={fileDialogVisible}, focusOwner={(focusOwner == null ? "none" : $"{focusOwner.GetType().Name}:{focusOwner.Name}")}";
+        return fileDialogVisible || textInputFocused;
     }
 
     public void PasteFromClipboard()
@@ -307,6 +331,7 @@ public partial class FastDrawImageScanner : Node2D
         modeRow.AddChild(modeLabel);
 
         _modeOption = new OptionButton { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _modeOption.FocusMode = Control.FocusModeEnum.None;
         _modeOption.AddItem("黑色部分", (int)DrawRegionMode.Black);
         _modeOption.AddItem("白色部分", (int)DrawRegionMode.White);
         _modeOption.Select((int)_drawMode);
@@ -317,14 +342,17 @@ public partial class FastDrawImageScanner : Node2D
         vbox.AddChild(buttonRow);
 
         var importButton = new Button { Text = "导入图像" };
+        importButton.FocusMode = Control.FocusModeEnum.None;
         importButton.Pressed += OpenImportDialog;
         buttonRow.AddChild(importButton);
 
         var drawButton = new Button { Text = "绘制当前图像" };
+        drawButton.FocusMode = Control.FocusModeEnum.None;
         drawButton.Pressed += DrawCurrentImage;
         buttonRow.AddChild(drawButton);
 
         var clearButton = new Button { Text = "清空" };
+        clearButton.FocusMode = Control.FocusModeEnum.None;
         clearButton.Pressed += ClearCurrentImage;
         buttonRow.AddChild(clearButton);
 
@@ -365,6 +393,7 @@ public partial class FastDrawImageScanner : Node2D
         _areaSelectionStart = point;
         _hasAreaSelectionStart = true;
         _overlay.SetSelectionRect(CreatePointMarker(point));
+        FastDrawLog.Debug($"记录选区起点: point=({point.X:0.##}, {point.Y:0.##}), drawArea={_drawArea}");
         SetStatus($"已记录第一个角点: ({Mathf.RoundToInt(point.X)}, {Mathf.RoundToInt(point.Y)})，移动鼠标后按 {GetShortcutText(FastDrawShortcutAction.CaptureSelectionEnd)} 记录第二点");
     }
 
@@ -380,6 +409,7 @@ public partial class FastDrawImageScanner : Node2D
         Vector2 startPoint = _areaSelectionStart;
         _hasAreaSelectionStart = false;
         _overlay.CancelSelectionMode();
+        FastDrawLog.Debug($"记录选区终点: start=({startPoint.X:0.##}, {startPoint.Y:0.##}), end=({point.X:0.##}, {point.Y:0.##})");
         ApplySelectedArea(startPoint, point);
     }
 
@@ -407,6 +437,7 @@ public partial class FastDrawImageScanner : Node2D
         if (_sourceImage != null)
             RefreshRenderedImage(_previewVisible);
 
+        FastDrawLog.Debug($"更新绘制区域: area={_drawArea}");
         SetStatus($"已更新绘制区域: ({Mathf.RoundToInt(startPoint.X)}, {Mathf.RoundToInt(startPoint.Y)}) -> ({Mathf.RoundToInt(endPoint.X)}, {Mathf.RoundToInt(endPoint.Y)})，尺寸 {Mathf.RoundToInt(area.Size.X)}x{Mathf.RoundToInt(area.Size.Y)}");
     }
 
@@ -786,5 +817,9 @@ public partial class FastDrawImageScanner : Node2D
     {
         _statusLabel.Text = text;
         GD.Print("[FastDrawImg] " + text);
+        FastDrawLog.Debug("状态更新: " + text);
     }
+
+    private static string DescribeKeyEvent(InputEventKey keyEvent)
+        => $"keycode={keyEvent.Keycode}, keyLabel={keyEvent.KeyLabel}, physicalKeycode={keyEvent.PhysicalKeycode}, ctrl={keyEvent.CtrlPressed}, shift={keyEvent.ShiftPressed}, alt={keyEvent.AltPressed}, unicode={keyEvent.Unicode}";
 }
