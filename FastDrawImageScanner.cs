@@ -44,8 +44,8 @@ public partial class FastDrawImageScanner : Node2D
     private ulong? _localPlayerId;
     private bool _dropConnected;
     private bool _previewVisible;
-    private bool _isAreaDragActive;
-    private Vector2 _areaDragStart;
+    private bool _hasAreaSelectionStart;
+    private Vector2 _areaSelectionStart;
     private Rect2 _drawArea = DefaultDrawArea;
     private DrawRegionMode _drawMode = DrawRegionMode.Black;
 
@@ -57,7 +57,7 @@ public partial class FastDrawImageScanner : Node2D
         BuildUi();
         TryConnectFileDrop();
         Visible = true;
-        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空 / 选择区域重框，默认绘制黑色部分，可在面板切换");
+        SetStatus("Ctrl+U 导入图片 / Ctrl+V 粘贴路径 / U 重绘 / Shift+U 清空 / 选择区域后用 [ 和 ] 取两点，默认绘制黑色部分");
     }
 
     public override void _ExitTree()
@@ -83,7 +83,7 @@ public partial class FastDrawImageScanner : Node2D
 
     public bool HandleShortcutKey(InputEventKey keyEvent)
     {
-        if (!_overlay.IsSelectionMode)
+        if (!_overlay.IsSelectionMode || !keyEvent.Pressed || keyEvent.Echo)
             return false;
 
         if (keyEvent.Keycode == Key.Escape)
@@ -92,56 +92,34 @@ public partial class FastDrawImageScanner : Node2D
             return true;
         }
 
-        if (keyEvent.Keycode is Key.U or Key.V)
-            return true;
-
-        return false;
-    }
-
-    public bool HandleSelectionPointerInput(InputEvent @event)
-    {
-        if (!_overlay.IsSelectionMode)
-            return false;
-
-        if (@event is InputEventMouseButton mouseButton)
+        if (keyEvent.Keycode == Key.Bracketleft)
         {
             Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
+            _areaSelectionStart = point;
+            _hasAreaSelectionStart = true;
+            _overlay.SetSelectionRect(CreatePointMarker(point));
+            SetStatus($"已记录第一个角点: ({Mathf.RoundToInt(point.X)}, {Mathf.RoundToInt(point.Y)})，移动鼠标后按 ] 记录第二点");
+            return true;
+        }
 
-            if (mouseButton.ButtonIndex == MouseButton.Left)
+        if (keyEvent.Keycode == Key.Bracketright)
+        {
+            if (!_hasAreaSelectionStart)
             {
-                if (mouseButton.Pressed)
-                {
-                    _isAreaDragActive = true;
-                    _areaDragStart = point;
-                    _overlay.SetSelectionRect(new Rect2(point, Vector2.Zero));
-                    return true;
-                }
-
-                if (_isAreaDragActive)
-                {
-                    _isAreaDragActive = false;
-                    Rect2 area = MakeRect(_areaDragStart, point);
-                    _overlay.CancelSelectionMode();
-                    OnAreaSelected(area);
-                    return true;
-                }
-            }
-
-            if (mouseButton.Pressed && mouseButton.ButtonIndex == MouseButton.Right)
-            {
-                CancelAreaSelection();
+                SetStatus("请先把鼠标移到第一个角点后按 [");
                 return true;
             }
 
-            return false;
-        }
-
-        if (@event is InputEventMouseMotion && _isAreaDragActive)
-        {
             Vector2 point = ClampToDrawings(_mapDrawings.GetLocalMousePosition());
-            _overlay.SetSelectionRect(MakeRect(_areaDragStart, point));
+            Rect2 area = MakeRect(_areaSelectionStart, point);
+            _hasAreaSelectionStart = false;
+            _overlay.CancelSelectionMode();
+            OnAreaSelected(area);
             return true;
         }
+
+        if (keyEvent.Keycode is Key.U or Key.V)
+            return true;
 
         return false;
     }
@@ -337,14 +315,14 @@ public partial class FastDrawImageScanner : Node2D
 
     private void StartAreaSelection()
     {
-        _isAreaDragActive = false;
+        _hasAreaSelectionStart = false;
         _overlay.EnterSelectionMode();
-        SetStatus("左键拖拽选择绘制区域，右键或 Esc 取消");
+        SetStatus("移动鼠标到第一个角点按 [，再移动到第二个角点按 ]，Esc 取消");
     }
 
     private void CancelAreaSelection()
     {
-        _isAreaDragActive = false;
+        _hasAreaSelectionStart = false;
         _overlay.CancelSelectionMode();
         SetStatus("已取消区域选择");
     }
@@ -667,6 +645,9 @@ public partial class FastDrawImageScanner : Node2D
     private Vector2 ClampToDrawings(Vector2 point)
         => new(Mathf.Clamp(point.X, 0f, _mapDrawings.Size.X), Mathf.Clamp(point.Y, 0f, _mapDrawings.Size.Y));
 
+    private static Rect2 CreatePointMarker(Vector2 point)
+        => new(point - new Vector2(3f, 3f), new Vector2(6f, 6f));
+
     private static Rect2 MakeRect(Vector2 start, Vector2 end)
     {
         float minX = Mathf.Min(start.X, end.X);
@@ -689,7 +670,7 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         _previewVisible = false;
-        _isAreaDragActive = false;
+        _hasAreaSelectionStart = false;
         _overlay.SetPreviewVisible(false);
         SetStatus(status);
     }

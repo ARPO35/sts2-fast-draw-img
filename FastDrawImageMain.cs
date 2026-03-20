@@ -82,12 +82,6 @@ public class FastDrawImageMain
             if (scanner == null)
                 return;
 
-            if (scanner.HandleSelectionPointerInput(@event))
-            {
-                __instance.GetViewport()?.SetInputAsHandled();
-                return;
-            }
-
             if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
                 return;
 
@@ -126,20 +120,6 @@ public class FastDrawImageMain
                 scanner.DrawCurrentImage();
                 __instance.GetViewport()?.SetInputAsHandled();
             }
-        }
-    }
-
-    [HarmonyPatch(typeof(NMapDrawings), "_GuiInput")]
-    private static class MapDrawingsGuiInputPatch
-    {
-        public static bool Prefix(NMapDrawings __instance, InputEvent @event)
-        {
-            var scanner = GetScanner(__instance);
-            if (scanner == null || !scanner.HandleSelectionPointerInput(@event))
-                return true;
-
-            __instance.GetViewport()?.SetInputAsHandled();
-            return false;
         }
     }
 }
