@@ -33,6 +33,7 @@ public partial class FastDrawImageScanner : Node2D
     private const int MaxRenderDimension = 320;
     private const int LineDensity = 2;
     private const float LuminanceThreshold = 0.5f;
+    private const float MinContentLuminanceRange = 0.02f;
     private static readonly Rect2 DefaultDrawArea = new(new Vector2(120f, 80f), new Vector2(640f, 480f));
 
     private NMapDrawings _mapDrawings = null!;
@@ -545,8 +546,7 @@ public partial class FastDrawImageScanner : Node2D
         FastDrawLog.Debug($"重采样图像: source={image.GetWidth()}x{image.GetHeight()}, render={renderSize.X}x{renderSize.Y}, drawArea={_drawArea}");
         Image work = CreateFittedBinaryCanvas(image, renderSize, out Image contentMask);
         _contentMask = contentMask;
-        ApplyBinaryThreshold(work);
-        FastDrawLog.Debug($"二值化前景像素统计: contentPixels={CountMaskPixels(contentMask)}");
+        ApplyBinaryThreshold(work, contentMask);
         return ApplyMorphologicalClose(work);
     }
 
@@ -597,18 +597,56 @@ public partial class FastDrawImageScanner : Node2D
         return canvas;
     }
 
-    private void ApplyBinaryThreshold(Image image)
+    private void ApplyBinaryThreshold(Image image, Image contentMask)
     {
         int width = image.GetWidth();
         int height = image.GetHeight();
+        (float minLuminance, float maxLuminance, int contentPixels) = MeasureContentLuminanceRange(image, contentMask);
+        float luminanceRange = maxLuminance - minLuminance;
+        bool useNormalizedRange = contentPixels > 0 && luminanceRange >= MinContentLuminanceRange;
+
+        FastDrawLog.Debug($"二值化前景统计: contentPixels={contentPixels}, minLum={minLuminance:0.###}, maxLum={maxLuminance:0.###}, range={luminanceRange:0.###}, normalized={useNormalizedRange}");
 
         for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
         {
+            if (contentMask.GetPixel(x, y).R <= 0.5f)
+            {
+                image.SetPixel(x, y, Colors.Black);
+                continue;
+            }
+
             Color px = image.GetPixel(x, y);
             float luminance = px.Luminance * px.A;
+            if (useNormalizedRange)
+                luminance = Mathf.Clamp((luminance - minLuminance) / luminanceRange, 0f, 1f);
+
             image.SetPixel(x, y, luminance > LuminanceThreshold ? Colors.White : Colors.Black);
         }
+    }
+
+    private static (float minLuminance, float maxLuminance, int contentPixels) MeasureContentLuminanceRange(Image image, Image contentMask)
+    {
+        float minLuminance = 1f;
+        float maxLuminance = 0f;
+        int contentPixels = 0;
+
+        for (int y = 0; y < image.GetHeight(); y++)
+        for (int x = 0; x < image.GetWidth(); x++)
+        {
+            if (contentMask.GetPixel(x, y).R <= 0.5f)
+                continue;
+
+            float luminance = image.GetPixel(x, y).Luminance * image.GetPixel(x, y).A;
+            minLuminance = Mathf.Min(minLuminance, luminance);
+            maxLuminance = Mathf.Max(maxLuminance, luminance);
+            contentPixels++;
+        }
+
+        if (contentPixels == 0)
+            return (0f, 0f, 0);
+
+        return (minLuminance, maxLuminance, contentPixels);
     }
 
     // A single close pass repairs tiny gaps without turning the whole image into a blob.
