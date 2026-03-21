@@ -5,7 +5,8 @@ namespace FastDrawImg.Patches;
 
 public partial class DrawAreaOverlay : Control
 {
-    private static readonly Color AreaFillColor = new(0.20f, 0.70f, 0.95f, 0.08f);
+    public const string NodeName = "FastDrawDrawAreaOverlay";
+
     private static readonly Color AreaOutlineColor = new(0.20f, 0.70f, 0.95f, 0.90f);
     private static readonly Color SelectionFillColor = new(0.95f, 0.80f, 0.20f, 0.18f);
     private static readonly Color SelectionOutlineColor = new(0.95f, 0.80f, 0.20f, 0.95f);
@@ -14,8 +15,6 @@ public partial class DrawAreaOverlay : Control
 
     private bool _selectionMode;
     private Rect2 _selectionRect = default;
-    private Texture2D? _previewTexture;
-    private bool _previewVisible;
 
     public Rect2 DrawArea { get; set; } = default;
 
@@ -31,18 +30,6 @@ public partial class DrawAreaOverlay : Control
     public void SetDrawArea(Rect2 area)
     {
         DrawArea = area;
-        QueueRedraw();
-    }
-
-    public void SetPreviewTexture(Texture2D? texture)
-    {
-        _previewTexture = texture;
-        QueueRedraw();
-    }
-
-    public void SetPreviewVisible(bool visible)
-    {
-        _previewVisible = visible;
         QueueRedraw();
     }
 
@@ -76,11 +63,6 @@ public partial class DrawAreaOverlay : Control
     {
         if (DrawArea.Size.X > 0f && DrawArea.Size.Y > 0f)
         {
-            if (_previewVisible && _previewTexture != null)
-                DrawTextureRect(_previewTexture, DrawArea, false, null, false);
-            else
-                DrawRect(DrawArea, AreaFillColor, true);
-
             DrawRect(DrawArea, AreaOutlineColor, false, 2f);
             DrawMarker(DrawArea.Position, AreaOutlineColor);
             DrawMarker(DrawArea.End, AreaOutlineColor);

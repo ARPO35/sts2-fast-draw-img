@@ -2,6 +2,7 @@ using Godot;
 using HarmonyLib;
 using System.Reflection;
 using MegaCrit.Sts2.Core.Modding;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using FastDrawImg.Patches;
 
@@ -29,8 +30,14 @@ public class FastDrawImageMain
         }
     }
 
+    private static SubViewport? TryGetDrawViewport(NMapDrawings drawings)
+        => drawings.FindChild("DrawViewport", true, false) as SubViewport;
+
     private static FastDrawImageScanner? GetScanner(NMapDrawings drawings)
-        => drawings.GetNodeOrNull<FastDrawImageScanner>(FastDrawImageScanner.NodeName);
+    {
+        SubViewport? drawViewport = TryGetDrawViewport(drawings);
+        return drawViewport?.GetNodeOrNull<FastDrawImageScanner>(FastDrawImageScanner.NodeName);
+    }
 
     private static ulong? TryGetPlayerId(object? state)
     {
@@ -41,16 +48,35 @@ public class FastDrawImageMain
         return playerIdField?.GetValue(state) is ulong playerId ? playerId : null;
     }
 
+    private static void CleanupLegacyArtifacts(NMapDrawings drawings, SubViewport drawViewport)
+    {
+        Node? legacyScanner = drawings.FindChild(FastDrawImageScanner.NodeName, true, false);
+        if (legacyScanner != null && legacyScanner != drawViewport.GetNodeOrNull<Node>(FastDrawImageScanner.NodeName))
+            legacyScanner.QueueFree();
+
+        drawings.FindChild(DrawAreaOverlay.NodeName, true, false)?.QueueFree();
+        NGame.Instance?.FindChild(FastDrawImageScanner.UiLayerName, true, false)?.QueueFree();
+    }
+
     [HarmonyPatch(typeof(NMapDrawings), "_Ready")]
     private static class MapDrawingsReadyPatch
     {
         public static void Postfix(NMapDrawings __instance)
         {
-            if (GetScanner(__instance) != null)
+            SubViewport? drawViewport = TryGetDrawViewport(__instance);
+            if (drawViewport == null)
+            {
+                FastDrawLog.Warn("未找到 DrawViewport，无法挂载图片绘制器");
+                return;
+            }
+
+            if (drawViewport.GetNodeOrNull<FastDrawImageScanner>(FastDrawImageScanner.NodeName) != null)
                 return;
 
+            CleanupLegacyArtifacts(__instance, drawViewport);
+
             var scanner = new FastDrawImageScanner { Name = FastDrawImageScanner.NodeName };
-            __instance.AddChild(scanner);
+            drawViewport.AddChild(scanner);
             scanner.Initialize(__instance);
             GD.Print("[FastDrawImg] 图像绘制器已挂载");
         }
@@ -74,15 +100,19 @@ public class FastDrawImageMain
         }
     }
 
-    [HarmonyPatch(typeof(NMapDrawings), "_Input")]
-    private static class MapDrawingsInputPatch
+    [HarmonyPatch(typeof(NGame), "_Input")]
+    private static class GlobalInputPatch
     {
-        public static void Postfix(NMapDrawings __instance, InputEvent @event)
+        public static void Postfix(NGame __instance, InputEvent inputEvent)
         {
-            if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
+            if (inputEvent is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
                 return;
 
-            var scanner = GetScanner(__instance);
+            var drawingsNode = __instance.GetTree().Root.FindChild("Drawings", true, false) as NMapDrawings;
+            if (drawingsNode == null)
+                return;
+
+            var scanner = GetScanner(drawingsNode);
             if (scanner == null)
                 return;
 
