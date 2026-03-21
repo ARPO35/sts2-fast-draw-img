@@ -29,6 +29,7 @@ public partial class FastDrawImageScanner : Node2D
 
     public const string NodeName = "FastDrawImageScanner";
     public const string UiLayerName = "FastDrawUiLayer";
+    public const string PreviewSpriteName = "FastDrawPreviewSprite";
     private const float MinDrawAreaSize = 16f;
     private const float RenderScaleDivisor = 4f;
     private const int MinRenderDimension = 32;
@@ -60,6 +61,8 @@ public partial class FastDrawImageScanner : Node2D
     private bool _suppressNextMapClearReset;
     private Vector2 _areaSelectionStart;
     private Rect2 _drawArea = DefaultDrawArea;
+    private Rect2 _displayRect = DefaultDrawArea;
+    private Rect2I _displayPixelBounds = new(120, 80, 640, 480);
     private DrawRegionMode _drawMode = DrawRegionMode.Black;
 
     public bool IsSelectionModeActive => _overlay.IsSelectionMode;
@@ -91,6 +94,9 @@ public partial class FastDrawImageScanner : Node2D
 
         if (IsInstanceValid(_overlay))
             _overlay.QueueFree();
+
+        if (IsInstanceValid(_previewSprite))
+            _previewSprite.QueueFree();
 
         if (IsInstanceValid(_uiLayer))
             _uiLayer.QueueFree();
@@ -311,12 +317,12 @@ public partial class FastDrawImageScanner : Node2D
     {
         _previewSprite = new Sprite2D
         {
-            Name = "FastDrawPreviewSprite",
+            Name = PreviewSpriteName,
             Centered = false,
             Visible = false,
             TextureFilter = TextureFilterEnum.Nearest
         };
-        AddChild(_previewSprite);
+        _mapDrawings.AddChild(_previewSprite);
     }
 
     private void BuildOverlay()
@@ -583,9 +589,10 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         _binaryImage = PrepareBinaryImage(_sourceImage);
+        UpdateDisplayLayout();
         _previewVisible = showPreview;
         UpdatePreviewTexture();
-        FastDrawLog.Debug($"刷新渲染图像: source={GetImageSizeText(_sourceImage)}, binary={GetImageSizeText(_binaryImage)}, mask={GetImageSizeText(_contentMask)}, drawArea={FormatRect(_drawArea)}, previewVisible={_previewVisible}, drawablePixels={CountDrawablePixels(_binaryImage)}");
+        FastDrawLog.Debug($"刷新渲染图像: source={GetImageSizeText(_sourceImage)}, binary={GetImageSizeText(_binaryImage)}, mask={GetImageSizeText(_contentMask)}, drawArea={FormatRect(_drawArea)}, displayRect={FormatRect(_displayRect)}, pixelBounds={FormatRectI(_displayPixelBounds)}, previewVisible={_previewVisible}, drawablePixels={CountDrawablePixels(_binaryImage)}");
     }
 
     private Image PrepareBinaryImage(Image image)
@@ -596,6 +603,44 @@ public partial class FastDrawImageScanner : Node2D
         _contentMask = contentMask;
         ApplyBinaryThreshold(work, contentMask);
         return ApplyMorphologicalClose(work);
+    }
+
+    private void UpdateDisplayLayout()
+    {
+        if (_binaryImage == null)
+        {
+            _displayRect = _drawArea;
+            _displayPixelBounds = new Rect2I(
+                Mathf.FloorToInt(_drawArea.Position.X),
+                Mathf.FloorToInt(_drawArea.Position.Y),
+                Mathf.Max(1, Mathf.CeilToInt(_drawArea.Size.X)),
+                Mathf.Max(1, Mathf.CeilToInt(_drawArea.Size.Y)));
+            return;
+        }
+
+        Vector2 imageSize = new(_binaryImage.GetWidth(), _binaryImage.GetHeight());
+        _displayRect = CalculateDisplayRect(_drawArea, imageSize);
+        _displayPixelBounds = CalculateDisplayPixelBounds(_displayRect);
+    }
+
+    private static Rect2 CalculateDisplayRect(Rect2 area, Vector2 imageSize)
+    {
+        if (imageSize.X <= 0f || imageSize.Y <= 0f || area.Size.X <= 0f || area.Size.Y <= 0f)
+            return area;
+
+        float scale = Mathf.Min(area.Size.X / imageSize.X, area.Size.Y / imageSize.Y);
+        Vector2 displaySize = imageSize * scale;
+        Vector2 displayPosition = area.Position + (area.Size - displaySize) * 0.5f;
+        return new Rect2(displayPosition, displaySize);
+    }
+
+    private Rect2I CalculateDisplayPixelBounds(Rect2 displayRect)
+    {
+        int minX = Mathf.Clamp(Mathf.FloorToInt(displayRect.Position.X), 0, Mathf.CeilToInt(_mapDrawings.Size.X));
+        int minY = Mathf.Clamp(Mathf.FloorToInt(displayRect.Position.Y), 0, Mathf.CeilToInt(_mapDrawings.Size.Y));
+        int maxX = Mathf.Clamp(Mathf.CeilToInt(displayRect.End.X), minX + 1, Mathf.CeilToInt(_mapDrawings.Size.X));
+        int maxY = Mathf.Clamp(Mathf.CeilToInt(displayRect.End.Y), minY + 1, Mathf.CeilToInt(_mapDrawings.Size.Y));
+        return new Rect2I(minX, minY, maxX - minX, maxY - minY);
     }
 
     private Vector2I CalculateRenderSize(Vector2 areaSize)
@@ -770,11 +815,11 @@ public partial class FastDrawImageScanner : Node2D
 
     private void SyncPreviewSpriteTransform()
     {
-        if (_binaryImage == null)
+        if (_binaryImage == null || !IsInstanceValid(_previewSprite))
             return;
 
-        _previewSprite.Position = _drawArea.Position;
-        _previewSprite.Scale = new Vector2(_drawArea.Size.X / _binaryImage.GetWidth(), _drawArea.Size.Y / _binaryImage.GetHeight());
+        _previewSprite.Position = _displayRect.Position;
+        _previewSprite.Scale = new Vector2(_displayRect.Size.X / _binaryImage.GetWidth(), _displayRect.Size.Y / _binaryImage.GetHeight());
     }
 
     private void SendClearToNetwork()
@@ -1070,6 +1115,9 @@ public partial class FastDrawImageScanner : Node2D
 
     private static string FormatRect(Rect2 rect)
         => $"({rect.Position.X:0.##}, {rect.Position.Y:0.##}, {rect.Size.X:0.##}, {rect.Size.Y:0.##})";
+
+    private static string FormatRectI(Rect2I rect)
+        => $"({rect.Position.X}, {rect.Position.Y}, {rect.Size.X}, {rect.Size.Y})";
 
     private static string FormatVector(Vector2 vector)
         => $"({vector.X:0.##}, {vector.Y:0.##})";

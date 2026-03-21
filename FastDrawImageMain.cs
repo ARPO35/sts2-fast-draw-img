@@ -130,6 +130,7 @@ public class FastDrawImageMain
         if (legacyScanner != null && legacyScanner != drawViewport.GetNodeOrNull<Node>(FastDrawImageScanner.NodeName))
             legacyScanner.QueueFree();
 
+        drawings.FindChild(FastDrawImageScanner.PreviewSpriteName, true, false)?.QueueFree();
         drawings.FindChild(DrawAreaOverlay.NodeName, true, false)?.QueueFree();
         NGame.Instance?.FindChild(FastDrawImageScanner.UiLayerName, true, false)?.QueueFree();
     }
