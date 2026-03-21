@@ -14,6 +14,9 @@ namespace FastDrawImg.Patches;
 
 public partial class FastDrawImageScanner : Node2D
 {
+    private readonly record struct PixelInterval(int StartX, int EndXExclusive);
+    private readonly record struct FinalRowSegment(int Y, int StartX, int EndXExclusive);
+
     public enum DrawDispatchResult
     {
         Failed = 0,
@@ -31,10 +34,6 @@ public partial class FastDrawImageScanner : Node2D
     public const string UiLayerName = "FastDrawUiLayer";
     public const string PreviewSpriteName = "FastDrawPreviewSprite";
     private const float MinDrawAreaSize = 16f;
-    private const float RenderScaleDivisor = 4f;
-    private const int MinRenderDimension = 32;
-    private const int MaxRenderDimension = 320;
-    private const int LineDensity = 2;
     private const float LuminanceThreshold = 0.5f;
     private const float MinContentLuminanceRange = 0.02f;
     private static readonly Rect2 DefaultDrawArea = new(new Vector2(120f, 80f), new Vector2(640f, 480f));
@@ -54,6 +53,9 @@ public partial class FastDrawImageScanner : Node2D
     private Image? _binaryImage;
     private Image? _contentMask;
     private string? _currentImagePath;
+    private readonly List<FinalRowSegment> _finalSegments = new();
+    private int _blackPixelCount;
+    private int _whitePixelCount;
     private ulong? _localPlayerId;
     private bool _dropConnected;
     private bool _previewVisible;
@@ -272,7 +274,7 @@ public partial class FastDrawImageScanner : Node2D
 
         _previewVisible = true;
         UpdatePreviewTexture();
-        FastDrawLog.Debug($"开始绘制当前图像: drawArea={FormatRect(_drawArea)}, binarySize={GetImageSizeText(_binaryImage)}, drawMode={_drawMode}");
+        FastDrawLog.Debug($"开始绘制当前图像: drawArea={FormatRect(_drawArea)}, displayRect={FormatRect(_displayRect)}, sourceSize={GetImageSizeText(_sourceImage)}, binarySize={GetImageSizeText(_binaryImage)}, drawMode={_drawMode}, finalSegments={_finalSegments.Count}");
 
         DrawDispatchResult result = SendImageToNetwork();
         if (result == DrawDispatchResult.Failed)
@@ -524,9 +526,9 @@ public partial class FastDrawImageScanner : Node2D
         _drawArea = area;
         _overlay.SetDrawArea(_drawArea);
         if (_sourceImage != null)
-            RefreshRenderedImage(_previewVisible);
+            RebuildDisplayOutput();
 
-        FastDrawLog.Debug($"更新绘制区域: area={FormatRect(_drawArea)}");
+        FastDrawLog.Debug($"更新绘制区域: area={FormatRect(_drawArea)}, displayRect={FormatRect(_displayRect)}, pixelBounds={FormatRectI(_displayPixelBounds)}");
         SetStatus($"已更新绘制区域: ({Mathf.RoundToInt(startPoint.X)}, {Mathf.RoundToInt(startPoint.Y)}) -> ({Mathf.RoundToInt(endPoint.X)}, {Mathf.RoundToInt(endPoint.Y)})，尺寸 {Mathf.RoundToInt(area.Size.X)}x{Mathf.RoundToInt(area.Size.Y)}");
     }
 
@@ -582,32 +584,68 @@ public partial class FastDrawImageScanner : Node2D
         {
             _binaryImage = null;
             _contentMask = null;
+            _finalSegments.Clear();
+            _blackPixelCount = 0;
+            _whitePixelCount = 0;
             _previewVisible = false;
+            UpdateDisplayLayout();
             UpdatePreviewTexture();
             FastDrawLog.Debug("刷新渲染图像时 source 为空，已清空预览");
             return;
         }
 
         _binaryImage = PrepareBinaryImage(_sourceImage);
-        UpdateDisplayLayout();
         _previewVisible = showPreview;
+        RebuildDisplayOutput();
+        FastDrawLog.Debug($"刷新渲染图像: source={GetImageSizeText(_sourceImage)}, binary={GetImageSizeText(_binaryImage)}, mask={GetImageSizeText(_contentMask)}, drawArea={FormatRect(_drawArea)}, displayRect={FormatRect(_displayRect)}, pixelBounds={FormatRectI(_displayPixelBounds)}, previewVisible={_previewVisible}, blackPixels={_blackPixelCount}, whitePixels={_whitePixelCount}, finalSegments={_finalSegments.Count}");
+    }
+
+    private void RebuildDisplayOutput()
+    {
+        UpdateDisplayLayout();
+        _finalSegments.Clear();
+
+        if (_binaryImage == null)
+        {
+            UpdatePreviewTexture();
+            return;
+        }
+
+        List<FinalRowSegment> resolvedSegments = BuildFinalRowSegments(_binaryImage, _drawMode, out int rawSegments, out int dedupedSegments, out int mergedSegments);
+        _finalSegments.AddRange(resolvedSegments);
         UpdatePreviewTexture();
-        FastDrawLog.Debug($"刷新渲染图像: source={GetImageSizeText(_sourceImage)}, binary={GetImageSizeText(_binaryImage)}, mask={GetImageSizeText(_contentMask)}, drawArea={FormatRect(_drawArea)}, displayRect={FormatRect(_displayRect)}, pixelBounds={FormatRectI(_displayPixelBounds)}, previewVisible={_previewVisible}, drawablePixels={CountDrawablePixels(_binaryImage)}");
+        FastDrawLog.Debug($"重建最终输出: displayRect={FormatRect(_displayRect)}, pixelBounds={FormatRectI(_displayPixelBounds)}, rawSegments={rawSegments}, dedupedSegments={dedupedSegments}, mergedSegments={mergedSegments}, drawablePixels={CountDrawablePixels(_drawMode)}");
     }
 
     private Image PrepareBinaryImage(Image image)
     {
-        Vector2I renderSize = CalculateRenderSize(_drawArea.Size);
-        FastDrawLog.Debug($"重采样图像: source={image.GetWidth()}x{image.GetHeight()}, render={renderSize.X}x{renderSize.Y}, drawArea={FormatRect(_drawArea)}");
-        Image work = CreateFittedBinaryCanvas(image, renderSize, out Image contentMask);
+        Image work = (Image)image.Duplicate();
+        if (work.GetFormat() != Image.Format.Rgba8)
+            work.Convert(Image.Format.Rgba8);
+
+        Image contentMask = CreateContentMask(work);
         _contentMask = contentMask;
-        ApplyBinaryThreshold(work, contentMask);
-        return ApplyMorphologicalClose(work);
+        ApplyBinaryThreshold(work, contentMask, out _blackPixelCount, out _whitePixelCount);
+        FastDrawLog.Debug($"原图阈值完成: source={image.GetWidth()}x{image.GetHeight()}, maskPixels={CountMaskPixels(contentMask)}, blackPixels={_blackPixelCount}, whitePixels={_whitePixelCount}");
+        return work;
+    }
+
+    private Image CreateContentMask(Image image)
+    {
+        Image contentMask = Image.CreateEmpty(image.GetWidth(), image.GetHeight(), false, Image.Format.Rgba8);
+        contentMask.Fill(Colors.Black);
+
+        for (int y = 0; y < image.GetHeight(); y++)
+        for (int x = 0; x < image.GetWidth(); x++)
+            if (image.GetPixel(x, y).A > 0.01f)
+                contentMask.SetPixel(x, y, Colors.White);
+
+        return contentMask;
     }
 
     private void UpdateDisplayLayout()
     {
-        if (_binaryImage == null)
+        if (_sourceImage == null)
         {
             _displayRect = _drawArea;
             _displayPixelBounds = new Rect2I(
@@ -618,7 +656,7 @@ public partial class FastDrawImageScanner : Node2D
             return;
         }
 
-        Vector2 imageSize = new(_binaryImage.GetWidth(), _binaryImage.GetHeight());
+        Vector2 imageSize = new(_sourceImage.GetWidth(), _sourceImage.GetHeight());
         _displayRect = CalculateDisplayRect(_drawArea, imageSize);
         _displayPixelBounds = CalculateDisplayPixelBounds(_displayRect);
     }
@@ -643,61 +681,15 @@ public partial class FastDrawImageScanner : Node2D
         return new Rect2I(minX, minY, maxX - minX, maxY - minY);
     }
 
-    private Vector2I CalculateRenderSize(Vector2 areaSize)
-    {
-        int width = Math.Max(MinRenderDimension, Mathf.RoundToInt(areaSize.X / RenderScaleDivisor));
-        int height = Math.Max(MinRenderDimension, Mathf.RoundToInt(areaSize.Y / RenderScaleDivisor));
-
-        int longestEdge = Math.Max(width, height);
-        if (longestEdge > MaxRenderDimension)
-        {
-            float scale = MaxRenderDimension / (float)longestEdge;
-            width = Math.Max(MinRenderDimension, Mathf.RoundToInt(width * scale));
-            height = Math.Max(MinRenderDimension, Mathf.RoundToInt(height * scale));
-        }
-
-        return new Vector2I(width, height);
-    }
-
-    private Image CreateFittedBinaryCanvas(Image source, Vector2I renderSize, out Image contentMask)
-    {
-        Image canvas = Image.CreateEmpty(renderSize.X, renderSize.Y, false, Image.Format.Rgba8);
-        canvas.Fill(Colors.Black);
-        contentMask = Image.CreateEmpty(renderSize.X, renderSize.Y, false, Image.Format.Rgba8);
-        contentMask.Fill(Colors.Black);
-
-        int sourceWidth = source.GetWidth();
-        int sourceHeight = source.GetHeight();
-        if (sourceWidth <= 0 || sourceHeight <= 0)
-            return canvas;
-
-        float scale = Math.Min(renderSize.X / (float)sourceWidth, renderSize.Y / (float)sourceHeight);
-        int fittedWidth = Math.Max(1, Mathf.RoundToInt(sourceWidth * scale));
-        int fittedHeight = Math.Max(1, Mathf.RoundToInt(sourceHeight * scale));
-
-        Image resized = (Image)source.Duplicate();
-        resized.Resize(fittedWidth, fittedHeight, Image.Interpolation.Lanczos);
-
-        Vector2I offset = new((renderSize.X - fittedWidth) / 2, (renderSize.Y - fittedHeight) / 2);
-        Rect2I sourceRect = new(0, 0, fittedWidth, fittedHeight);
-        canvas.BlitRect(resized, sourceRect, offset);
-
-        for (int y = 0; y < fittedHeight; y++)
-        for (int x = 0; x < fittedWidth; x++)
-            if (resized.GetPixel(x, y).A > 0.01f)
-                contentMask.SetPixel(offset.X + x, offset.Y + y, Colors.White);
-
-        FastDrawLog.Debug($"适配画布: render={renderSize.X}x{renderSize.Y}, fitted={fittedWidth}x{fittedHeight}, offset=({offset.X}, {offset.Y}), maskPixels={CountMaskPixels(contentMask)}");
-        return canvas;
-    }
-
-    private void ApplyBinaryThreshold(Image image, Image contentMask)
+    private void ApplyBinaryThreshold(Image image, Image contentMask, out int blackPixels, out int whitePixels)
     {
         int width = image.GetWidth();
         int height = image.GetHeight();
         (float minLuminance, float maxLuminance, int contentPixels) = MeasureContentLuminanceRange(image, contentMask);
         float luminanceRange = maxLuminance - minLuminance;
         bool useNormalizedRange = contentPixels > 0 && luminanceRange >= MinContentLuminanceRange;
+        blackPixels = 0;
+        whitePixels = 0;
 
         FastDrawLog.Debug($"二值化前景统计: contentPixels={contentPixels}, minLum={minLuminance:0.###}, maxLum={maxLuminance:0.###}, range={luminanceRange:0.###}, normalized={useNormalizedRange}");
 
@@ -715,7 +707,12 @@ public partial class FastDrawImageScanner : Node2D
             if (useNormalizedRange)
                 luminance = Mathf.Clamp((luminance - minLuminance) / luminanceRange, 0f, 1f);
 
-            image.SetPixel(x, y, luminance > LuminanceThreshold ? Colors.White : Colors.Black);
+            bool isWhite = luminance > LuminanceThreshold;
+            image.SetPixel(x, y, isWhite ? Colors.White : Colors.Black);
+            if (isWhite)
+                whitePixels++;
+            else
+                blackPixels++;
         }
     }
 
@@ -744,63 +741,34 @@ public partial class FastDrawImageScanner : Node2D
         return (minLuminance, maxLuminance, contentPixels);
     }
 
-    private Image ApplyMorphologicalClose(Image image)
-    {
-        int width = image.GetWidth();
-        int height = image.GetHeight();
-        Image dilated = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
-        Image closed = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
-
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-            dilated.SetPixel(x, y, HasWhiteNeighbor(image, x, y) ? Colors.White : Colors.Black);
-
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-            closed.SetPixel(x, y, AllNeighborsWhite(dilated, x, y) ? Colors.White : Colors.Black);
-
-        return closed;
-    }
-
-    private bool HasWhiteNeighbor(Image image, int x, int y)
-    {
-        for (int neighborY = Math.Max(0, y - 1); neighborY <= Math.Min(image.GetHeight() - 1, y + 1); neighborY++)
-        for (int neighborX = Math.Max(0, x - 1); neighborX <= Math.Min(image.GetWidth() - 1, x + 1); neighborX++)
-            if (image.GetPixel(neighborX, neighborY).R > 0.5f)
-                return true;
-
-        return false;
-    }
-
-    private bool AllNeighborsWhite(Image image, int x, int y)
-    {
-        for (int neighborY = Math.Max(0, y - 1); neighborY <= Math.Min(image.GetHeight() - 1, y + 1); neighborY++)
-        for (int neighborX = Math.Max(0, x - 1); neighborX <= Math.Min(image.GetWidth() - 1, x + 1); neighborX++)
-            if (image.GetPixel(neighborX, neighborY).R <= 0.5f)
-                return false;
-
-        return true;
-    }
-
     private void UpdatePreviewTexture()
     {
-        if (_binaryImage == null)
+        if (_binaryImage == null || _displayPixelBounds.Size.X <= 0 || _displayPixelBounds.Size.Y <= 0)
         {
             _previewTex = null;
             _previewSprite.Texture = null;
             _previewSprite.Visible = false;
-            FastDrawLog.Debug("更新预览贴图时 binary 为空");
+            FastDrawLog.Debug("更新预览贴图时没有可用输出");
             return;
         }
 
-        int width = _binaryImage.GetWidth();
-        int height = _binaryImage.GetHeight();
+        int width = _displayPixelBounds.Size.X;
+        int height = _displayPixelBounds.Size.Y;
         Image preview = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
         Color transparent = new(0f, 0f, 0f, 0f);
+        preview.Fill(transparent);
 
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-            preview.SetPixel(x, y, IsTargetPixel(_binaryImage, x, y) ? _drawColor : transparent);
+        foreach (FinalRowSegment segment in _finalSegments)
+        {
+            int row = segment.Y - _displayPixelBounds.Position.Y;
+            if (row < 0 || row >= height)
+                continue;
+
+            int startX = Mathf.Clamp(segment.StartX - _displayPixelBounds.Position.X, 0, width);
+            int endX = Mathf.Clamp(segment.EndXExclusive - _displayPixelBounds.Position.X, 0, width);
+            for (int x = startX; x < endX; x++)
+                preview.SetPixel(x, row, _drawColor);
+        }
 
         if (_previewTex == null || _previewTex.GetWidth() != width || _previewTex.GetHeight() != height)
             _previewTex = ImageTexture.CreateFromImage(preview);
@@ -810,16 +778,16 @@ public partial class FastDrawImageScanner : Node2D
         _previewSprite.Texture = _previewTex;
         SyncPreviewSpriteTransform();
         _previewSprite.Visible = _previewVisible;
-        FastDrawLog.Debug($"预览贴图已更新: size={width}x{height}, drawablePixels={CountDrawablePixels(_binaryImage)}, previewVisible={_previewVisible}");
+        FastDrawLog.Debug($"预览贴图已更新: size={width}x{height}, finalSegments={_finalSegments.Count}, previewVisible={_previewVisible}");
     }
 
     private void SyncPreviewSpriteTransform()
     {
-        if (_binaryImage == null || !IsInstanceValid(_previewSprite))
+        if (!IsInstanceValid(_previewSprite))
             return;
 
-        _previewSprite.Position = _displayRect.Position;
-        _previewSprite.Scale = new Vector2(_displayRect.Size.X / _binaryImage.GetWidth(), _displayRect.Size.Y / _binaryImage.GetHeight());
+        _previewSprite.Position = _displayPixelBounds.Position;
+        _previewSprite.Scale = Vector2.One;
     }
 
     private void SendClearToNetwork()
@@ -847,10 +815,9 @@ public partial class FastDrawImageScanner : Node2D
             return DrawDispatchResult.PreviewOnly;
         }
 
-        List<(Vector2 start, Vector2 end)> segments = BuildSegments(_binaryImage);
-        if (segments.Count == 0)
+        if (_finalSegments.Count == 0)
         {
-            int alternateCount = CountDrawablePixels(_binaryImage, GetAlternateDrawMode());
+            int alternateCount = CountDrawablePixels(GetAlternateDrawMode());
             if (alternateCount > 0)
                 SetStatus($"图像里没有可绘制的{GetDrawableRegionText()}，可切换{GetSelectedRegionText(GetAlternateDrawMode())}后再试");
             else
@@ -858,7 +825,10 @@ public partial class FastDrawImageScanner : Node2D
             return DrawDispatchResult.Failed;
         }
 
-        FastDrawLog.Debug($"发送网络绘制: segments={segments.Count}, drawArea={FormatRect(_drawArea)}, mapSize={FormatVector(_mapDrawings.Size)}, firstSegment={(segments.Count > 0 ? $"{segments[0].start} -> {segments[0].end}" : "none")}");
+        string firstSegment = _finalSegments.Count > 0
+            ? $"({_finalSegments[0].StartX}, {_finalSegments[0].Y}) -> ({_finalSegments[0].EndXExclusive}, {_finalSegments[0].Y})"
+            : "none";
+        FastDrawLog.Debug($"发送网络绘制: segments={_finalSegments.Count}, drawArea={FormatRect(_drawArea)}, displayRect={FormatRect(_displayRect)}, pixelBounds={FormatRectI(_displayPixelBounds)}, mapSize={FormatVector(_mapDrawings.Size)}, firstSegment={firstSegment}");
         _suppressNextMapClearReset = true;
         ns.SendMessage(default(ClearMapDrawingsMessage));
 
@@ -867,8 +837,11 @@ public partial class FastDrawImageScanner : Node2D
             drawingMode = DrawingMode.Drawing
         };
 
-        foreach ((Vector2 start, Vector2 end) in segments)
+        foreach (FinalRowSegment segment in _finalSegments)
         {
+            float drawY = segment.Y + 0.5f;
+            Vector2 start = new(segment.StartX, drawY);
+            Vector2 end = new(segment.EndXExclusive, drawY);
             SendEvent(ns, ref msg, new NetMapDrawingEvent
             {
                 type = MapDrawingEventType.BeginLine,
@@ -893,45 +866,43 @@ public partial class FastDrawImageScanner : Node2D
         return DrawDispatchResult.NetworkSent;
     }
 
-    private List<(Vector2 start, Vector2 end)> BuildSegments(Image frame)
+    private List<FinalRowSegment> BuildFinalRowSegments(Image frame, DrawRegionMode mode, out int rawSegments, out int dedupedSegments, out int mergedSegments)
     {
-        var segments = new List<(Vector2 start, Vector2 end)>();
+        var rowBuckets = new Dictionary<int, List<PixelInterval>>();
         int width = frame.GetWidth();
         int height = frame.GetHeight();
+        rawSegments = 0;
+        dedupedSegments = 0;
+        mergedSegments = 0;
         if (width <= 0 || height <= 0)
-            return segments;
+            return new List<FinalRowSegment>();
 
-        Vector2 logicalOrigin = _drawArea.Position * 0.5f;
-        float logicalCellWidth = _drawArea.Size.X / width * 0.5f;
-        float logicalCellHeight = _drawArea.Size.Y / height * 0.5f;
-        float subStep = logicalCellHeight / LineDensity;
+        float scale = _displayRect.Size.X / width;
 
         for (int y = 0; y < height; y++)
         {
             int? runStart = null;
             for (int x = 0; x < width; x++)
             {
-                bool on = IsTargetPixel(frame, x, y);
+                bool on = IsTargetPixel(frame, x, y, mode);
                 if (on)
                 {
                     runStart ??= x;
                 }
                 else if (runStart.HasValue)
                 {
-                    for (int sub = 0; sub < LineDensity; sub++)
-                        AddSegment(segments, logicalOrigin, runStart.Value, x, y, logicalCellWidth, logicalCellHeight, sub * subStep);
+                    AddProjectedRun(rowBuckets, runStart.Value, x, y, scale, ref rawSegments);
                     runStart = null;
                 }
             }
 
             if (runStart.HasValue)
-            {
-                for (int sub = 0; sub < LineDensity; sub++)
-                    AddSegment(segments, logicalOrigin, runStart.Value, width, y, logicalCellWidth, logicalCellHeight, sub * subStep);
-            }
+                AddProjectedRun(rowBuckets, runStart.Value, width, y, scale, ref rawSegments);
         }
 
-        return segments;
+        List<FinalRowSegment> merged = MergeProjectedRuns(rowBuckets, out dedupedSegments);
+        mergedSegments = merged.Count;
+        return merged;
     }
 
     private void SendEvent(INetGameService ns, ref MapDrawingMessage msg, NetMapDrawingEvent ev)
@@ -955,11 +926,81 @@ public partial class FastDrawImageScanner : Node2D
         return pos;
     }
 
-    private void AddSegment(List<(Vector2 start, Vector2 end)> list, Vector2 logicalOrigin, int x1, int x2, int row, float logicalCellWidth, float logicalCellHeight, float rowOffset)
+    private void AddProjectedRun(Dictionary<int, List<PixelInterval>> rowBuckets, int sourceStartX, int sourceEndXExclusive, int sourceRow, float scale, ref int rawSegments)
     {
-        Vector2 start = (logicalOrigin + new Vector2(x1 * logicalCellWidth, row * logicalCellHeight + rowOffset)) * 2f;
-        Vector2 end = (logicalOrigin + new Vector2(x2 * logicalCellWidth, row * logicalCellHeight + rowOffset)) * 2f;
-        list.Add((start, end));
+        int localStartX = Mathf.Clamp(Mathf.FloorToInt(_displayRect.Position.X + sourceStartX * scale), _displayPixelBounds.Position.X, _displayPixelBounds.End.X);
+        int localEndX = Mathf.Clamp(Mathf.CeilToInt(_displayRect.Position.X + sourceEndXExclusive * scale), _displayPixelBounds.Position.X, _displayPixelBounds.End.X);
+        int localRowStart = Mathf.Clamp(Mathf.FloorToInt(_displayRect.Position.Y + sourceRow * scale), _displayPixelBounds.Position.Y, _displayPixelBounds.End.Y);
+        int localRowEnd = Mathf.Clamp(Mathf.CeilToInt(_displayRect.Position.Y + (sourceRow + 1) * scale), _displayPixelBounds.Position.Y, _displayPixelBounds.End.Y);
+
+        if (localEndX <= localStartX || localRowEnd <= localRowStart)
+            return;
+
+        for (int localRow = localRowStart; localRow < localRowEnd; localRow++)
+        {
+            if (!rowBuckets.TryGetValue(localRow, out List<PixelInterval>? intervals))
+            {
+                intervals = new List<PixelInterval>();
+                rowBuckets.Add(localRow, intervals);
+            }
+
+            intervals.Add(new PixelInterval(localStartX, localEndX));
+            rawSegments++;
+        }
+    }
+
+    private static List<FinalRowSegment> MergeProjectedRuns(Dictionary<int, List<PixelInterval>> rowBuckets, out int dedupedSegments)
+    {
+        var merged = new List<FinalRowSegment>();
+        dedupedSegments = 0;
+        var rows = new List<int>(rowBuckets.Keys);
+        rows.Sort();
+
+        foreach (int row in rows)
+        {
+            List<PixelInterval> intervals = rowBuckets[row];
+            intervals.Sort((left, right) =>
+            {
+                int startCompare = left.StartX.CompareTo(right.StartX);
+                return startCompare != 0 ? startCompare : left.EndXExclusive.CompareTo(right.EndXExclusive);
+            });
+
+            var unique = new List<PixelInterval>(intervals.Count);
+            PixelInterval? lastUnique = null;
+            foreach (PixelInterval interval in intervals)
+            {
+                if (lastUnique.HasValue && lastUnique.Value.Equals(interval))
+                    continue;
+
+                unique.Add(interval);
+                lastUnique = interval;
+                dedupedSegments++;
+            }
+
+            if (unique.Count == 0)
+                continue;
+
+            int currentStart = unique[0].StartX;
+            int currentEnd = unique[0].EndXExclusive;
+
+            for (int i = 1; i < unique.Count; i++)
+            {
+                PixelInterval interval = unique[i];
+                if (interval.StartX <= currentEnd)
+                {
+                    currentEnd = Math.Max(currentEnd, interval.EndXExclusive);
+                    continue;
+                }
+
+                merged.Add(new FinalRowSegment(row, currentStart, currentEnd));
+                currentStart = interval.StartX;
+                currentEnd = interval.EndXExclusive;
+            }
+
+            merged.Add(new FinalRowSegment(row, currentStart, currentEnd));
+        }
+
+        return merged;
     }
 
     private Vector2 ClampToDrawings(Vector2 point)
@@ -985,8 +1026,12 @@ public partial class FastDrawImageScanner : Node2D
             _binaryImage = null;
             _contentMask = null;
             _currentImagePath = null;
+            _finalSegments.Clear();
+            _blackPixelCount = 0;
+            _whitePixelCount = 0;
             _previewTex = null;
             _previewSprite.Texture = null;
+            UpdateDisplayLayout();
         }
 
         _previewVisible = false;
@@ -1005,8 +1050,8 @@ public partial class FastDrawImageScanner : Node2D
 
         if (_binaryImage != null)
         {
-            UpdatePreviewTexture();
             _previewVisible = true;
+            RebuildDisplayOutput();
             _previewSprite.Visible = true;
             SetStatus($"已切换为绘制{GetSelectedRegionText()}，预览已更新，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 绘制");
             return;
@@ -1042,12 +1087,12 @@ public partial class FastDrawImageScanner : Node2D
         if (_binaryImage == null)
             return string.Empty;
 
-        int currentCount = CountDrawablePixels(_binaryImage, mode);
+        int currentCount = CountDrawablePixels(mode);
         if (currentCount > 0)
             return string.Empty;
 
         DrawRegionMode alternateMode = mode == DrawRegionMode.Black ? DrawRegionMode.White : DrawRegionMode.Black;
-        int alternateCount = CountDrawablePixels(_binaryImage, alternateMode);
+        int alternateCount = CountDrawablePixels(alternateMode);
         if (alternateCount > 0)
             return $"{GetDrawableRegionText(mode)}为空，可切换{GetSelectedRegionText(alternateMode)}";
 
@@ -1079,22 +1124,8 @@ public partial class FastDrawImageScanner : Node2D
         FastDrawLog.Debug("状态更新: " + text);
     }
 
-    private int CountDrawablePixels(Image? image)
-        => CountDrawablePixels(image, _drawMode);
-
-    private int CountDrawablePixels(Image? image, DrawRegionMode mode)
-    {
-        if (image == null)
-            return 0;
-
-        int count = 0;
-        for (int y = 0; y < image.GetHeight(); y++)
-        for (int x = 0; x < image.GetWidth(); x++)
-            if (IsTargetPixel(image, x, y, mode))
-                count++;
-
-        return count;
-    }
+    private int CountDrawablePixels(DrawRegionMode mode)
+        => mode == DrawRegionMode.Black ? _blackPixelCount : _whitePixelCount;
 
     private static int CountMaskPixels(Image image)
     {
