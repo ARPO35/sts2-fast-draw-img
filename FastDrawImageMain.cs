@@ -1,5 +1,6 @@
 using Godot;
 using HarmonyLib;
+using System.Collections.Generic;
 using System.Reflection;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Nodes;
@@ -12,6 +13,8 @@ namespace FastDrawImg;
 public class FastDrawImageMain
 {
     private const string HarmonyId = "com.arpo35.fastdrawimg";
+    private const int ScannerAttachRetryFrames = 16;
+    private static readonly HashSet<ulong> PendingAttachRetries = new();
 
     public static void Initialize()
     {
@@ -39,6 +42,79 @@ public class FastDrawImageMain
         return drawViewport?.GetNodeOrNull<FastDrawImageScanner>(FastDrawImageScanner.NodeName);
     }
 
+    private static FastDrawImageScanner? EnsureScannerAttached(NMapDrawings drawings, bool warnIfMissing)
+    {
+        FastDrawImageScanner? existingScanner = GetScanner(drawings);
+        if (existingScanner != null)
+            return existingScanner;
+
+        SubViewport? drawViewport = TryGetDrawViewport(drawings);
+        if (drawViewport == null)
+        {
+            if (warnIfMissing)
+                FastDrawLog.Warn("未找到 DrawViewport，图片绘制器稍后重试挂载");
+
+            return null;
+        }
+
+        CleanupLegacyArtifacts(drawings, drawViewport);
+
+        var scanner = new FastDrawImageScanner
+        {
+            Name = FastDrawImageScanner.NodeName
+        };
+        drawViewport.AddChild(scanner);
+        scanner.Initialize(drawings);
+        GD.Print("[FastDrawImg] 图像绘制器已挂载");
+        return scanner;
+    }
+
+    private static void ScheduleScannerAttachRetry(NMapDrawings drawings)
+    {
+        if (!GodotObject.IsInstanceValid(drawings))
+            return;
+
+        ulong instanceId = drawings.GetInstanceId();
+        if (!PendingAttachRetries.Add(instanceId))
+            return;
+
+        SceneTree? tree = drawings.GetTree();
+        if (tree == null)
+        {
+            PendingAttachRetries.Remove(instanceId);
+            return;
+        }
+
+        int remainingFrames = ScannerAttachRetryFrames;
+
+        void RetryAttach()
+        {
+            if (!GodotObject.IsInstanceValid(drawings))
+            {
+                PendingAttachRetries.Remove(instanceId);
+                tree.ProcessFrame -= RetryAttach;
+                return;
+            }
+
+            if (EnsureScannerAttached(drawings, warnIfMissing: false) != null)
+            {
+                PendingAttachRetries.Remove(instanceId);
+                tree.ProcessFrame -= RetryAttach;
+                return;
+            }
+
+            remainingFrames--;
+            if (remainingFrames > 0)
+                return;
+
+            PendingAttachRetries.Remove(instanceId);
+            tree.ProcessFrame -= RetryAttach;
+            FastDrawLog.Warn("多帧重试后仍未找到 DrawViewport，图片绘制器未初始化");
+        }
+
+        tree.ProcessFrame += RetryAttach;
+    }
+
     private static ulong? TryGetPlayerId(object? state)
     {
         if (state == null)
@@ -63,22 +139,10 @@ public class FastDrawImageMain
     {
         public static void Postfix(NMapDrawings __instance)
         {
-            SubViewport? drawViewport = TryGetDrawViewport(__instance);
-            if (drawViewport == null)
-            {
-                FastDrawLog.Warn("未找到 DrawViewport，无法挂载图片绘制器");
-                return;
-            }
-
-            if (drawViewport.GetNodeOrNull<FastDrawImageScanner>(FastDrawImageScanner.NodeName) != null)
+            if (EnsureScannerAttached(__instance, warnIfMissing: false) != null)
                 return;
 
-            CleanupLegacyArtifacts(__instance, drawViewport);
-
-            var scanner = new FastDrawImageScanner { Name = FastDrawImageScanner.NodeName };
-            drawViewport.AddChild(scanner);
-            scanner.Initialize(__instance);
-            GD.Print("[FastDrawImg] 图像绘制器已挂载");
+            ScheduleScannerAttachRetry(__instance);
         }
     }
 
@@ -112,7 +176,7 @@ public class FastDrawImageMain
             if (drawingsNode == null)
                 return;
 
-            var scanner = GetScanner(drawingsNode);
+            var scanner = GetScanner(drawingsNode) ?? EnsureScannerAttached(drawingsNode, warnIfMissing: true);
             if (scanner == null)
                 return;
 
