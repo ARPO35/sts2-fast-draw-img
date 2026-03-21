@@ -60,7 +60,6 @@ public partial class FastDrawImageScanner : Node2D
     public void Initialize(NMapDrawings drawings)
     {
         _mapDrawings = drawings;
-        SetProcessInput(true);
         ResolvePlayerDrawColor();
         BuildOverlay();
         BuildUi();
@@ -68,23 +67,6 @@ public partial class FastDrawImageScanner : Node2D
         Visible = true;
         FastDrawLog.Debug($"Scanner initialized: mapSize={FormatVector(_mapDrawings.Size)}, drawArea={FormatRect(_drawArea)}, drawColor={_drawColor}");
         SetStatus(BuildShortcutSummary());
-    }
-
-    public override void _Input(InputEvent @event)
-    {
-        if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
-            return;
-
-        if (ShouldIgnoreShortcutInput(out string context))
-        {
-            FastDrawLog.Debug($"忽略按键输入: {DescribeKeyEvent(keyEvent)}, context={context}");
-            return;
-        }
-
-        FastDrawLog.Debug($"收到按键输入: {DescribeKeyEvent(keyEvent)}, context={context}");
-
-        if (HandleShortcutKey(keyEvent))
-            GetViewport()?.SetInputAsHandled();
     }
 
     public override void _ExitTree()
@@ -191,6 +173,18 @@ public partial class FastDrawImageScanner : Node2D
         }
 
         return false;
+    }
+
+    public bool ProcessShortcutInput(InputEventKey keyEvent)
+    {
+        if (ShouldIgnoreShortcutInput(out string context))
+        {
+            FastDrawLog.Debug($"忽略按键输入: {DescribeKeyEvent(keyEvent)}, context={context}");
+            return false;
+        }
+
+        FastDrawLog.Debug($"收到按键输入: {DescribeKeyEvent(keyEvent)}, context={context}");
+        return HandleShortcutKey(keyEvent);
     }
 
     private bool ShouldIgnoreShortcutInput(out string context)
@@ -499,6 +493,13 @@ public partial class FastDrawImageScanner : Node2D
             _currentImagePath = path;
             _sourceImage = PrepareSourceImage(image);
             RefreshRenderedImage(showPreview: true);
+            bool autoSwitchedMode = AutoSwitchDrawModeIfNeeded();
+            if (autoSwitchedMode)
+            {
+                SetStatus($"已载入: {Path.GetFileName(path)}，检测到当前图像只有{GetSelectedRegionText()}可绘制，已自动切换，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 绘制");
+                return true;
+            }
+
             SetStatus($"已载入: {Path.GetFileName(path)}，当前绘制{GetSelectedRegionText()}，按 {GetShortcutText(FastDrawShortcutAction.DrawCurrentImage)} 绘制");
             return true;
         }
@@ -704,7 +705,11 @@ public partial class FastDrawImageScanner : Node2D
         var segments = BuildSegments(_binaryImage);
         if (segments.Count == 0)
         {
-            SetStatus($"图像里没有可绘制的{GetDrawableRegionText()}");
+            int alternateCount = CountDrawablePixels(_binaryImage, GetAlternateDrawMode());
+            if (alternateCount > 0)
+                SetStatus($"图像里没有可绘制的{GetDrawableRegionText()}，检测到可绘制的{GetAlternateDrawableRegionText()}，请切换后再试");
+            else
+                SetStatus($"图像里没有可绘制的{GetDrawableRegionText()}");
             return DrawDispatchResult.Failed;
         }
 
@@ -872,6 +877,9 @@ public partial class FastDrawImageScanner : Node2D
     }
 
     private int CountDrawablePixels(Image? image)
+        => CountDrawablePixels(image, _drawMode);
+
+    private int CountDrawablePixels(Image? image, DrawRegionMode mode)
     {
         if (image == null)
             return 0;
@@ -879,7 +887,7 @@ public partial class FastDrawImageScanner : Node2D
         int count = 0;
         for (int y = 0; y < image.GetHeight(); y++)
         for (int x = 0; x < image.GetWidth(); x++)
-            if (IsTargetPixel(image, x, y))
+            if (IsTargetPixel(image, x, y, mode))
                 count++;
 
         return count;
@@ -899,6 +907,29 @@ public partial class FastDrawImageScanner : Node2D
     private static string GetImageSizeText(Image? image)
         => image == null ? "null" : $"{image.GetWidth()}x{image.GetHeight()}";
 
+    private bool AutoSwitchDrawModeIfNeeded()
+    {
+        if (_binaryImage == null)
+            return false;
+
+        int currentCount = CountDrawablePixels(_binaryImage, _drawMode);
+        if (currentCount > 0)
+            return false;
+
+        DrawRegionMode alternateMode = GetAlternateDrawMode();
+        int alternateCount = CountDrawablePixels(_binaryImage, alternateMode);
+        if (alternateCount <= 0)
+            return false;
+
+        _drawMode = alternateMode;
+        _modeOption.Select((int)_drawMode);
+        UpdatePreviewTexture();
+        _previewVisible = true;
+        _overlay.SetPreviewVisible(true);
+        FastDrawLog.Debug($"自动切换绘制模式: mode={_drawMode}, drawablePixels={alternateCount}");
+        return true;
+    }
+
     private static string FormatRect(Rect2 rect)
         => $"({rect.Position.X:0.##}, {rect.Position.Y:0.##}, {rect.Size.X:0.##}, {rect.Size.Y:0.##})";
 
@@ -907,4 +938,22 @@ public partial class FastDrawImageScanner : Node2D
 
     private static string DescribeKeyEvent(InputEventKey keyEvent)
         => $"keycode={keyEvent.Keycode}, keyLabel={keyEvent.KeyLabel}, physicalKeycode={keyEvent.PhysicalKeycode}, ctrl={keyEvent.CtrlPressed}, shift={keyEvent.ShiftPressed}, alt={keyEvent.AltPressed}, unicode={keyEvent.Unicode}";
+
+    private bool IsTargetPixel(Image frame, int x, int y, DrawRegionMode mode)
+    {
+        if (!IsContentPixel(x, y))
+            return false;
+
+        bool isWhite = frame.GetPixel(x, y).R > 0.5f;
+        return mode == DrawRegionMode.White ? isWhite : !isWhite;
+    }
+
+    private DrawRegionMode GetAlternateDrawMode()
+        => _drawMode == DrawRegionMode.Black ? DrawRegionMode.White : DrawRegionMode.Black;
+
+    private string GetAlternateDrawableRegionText()
+        => GetDrawableRegionText(GetAlternateDrawMode());
+
+    private string GetDrawableRegionText(DrawRegionMode mode)
+        => mode == DrawRegionMode.Black ? "黑色区域" : "白色区域";
 }

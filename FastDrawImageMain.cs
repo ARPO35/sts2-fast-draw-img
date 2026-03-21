@@ -73,4 +73,21 @@ public class FastDrawImageMain
                 GetScanner(__instance)?.OnPlayerMapCleared(playerId.Value);
         }
     }
+
+    [HarmonyPatch(typeof(NMapDrawings), "_Input")]
+    private static class MapDrawingsInputPatch
+    {
+        public static void Postfix(NMapDrawings __instance, InputEvent @event)
+        {
+            if (@event is not InputEventKey keyEvent || !keyEvent.Pressed || keyEvent.Echo)
+                return;
+
+            var scanner = GetScanner(__instance);
+            if (scanner == null)
+                return;
+
+            if (scanner.ProcessShortcutInput(keyEvent))
+                __instance.GetViewport()?.SetInputAsHandled();
+        }
+    }
 }
