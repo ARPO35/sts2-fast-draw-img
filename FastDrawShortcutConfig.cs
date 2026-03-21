@@ -369,7 +369,7 @@ public static class FastDrawShortcutConfig
         string baseDirectory = Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory;
         if (!File.Exists(configPath))
         {
-            FastDrawLog.Configure(baseDirectory, enabled: false);
+            FastDrawLog.Configure(baseDirectory, enabled: true);
             Current = FastDrawShortcuts.CreateDefault();
             FastDrawLog.Warn($"未找到快捷键配置文件 {configPath}，使用默认快捷键");
             return;
@@ -379,14 +379,14 @@ public static class FastDrawShortcutConfig
         {
             string json = File.ReadAllText(configPath);
             FastDrawImgConfigFile? config = JsonSerializer.Deserialize<FastDrawImgConfigFile>(json, JsonOptions);
-            FastDrawLog.Configure(baseDirectory, config?.DebugLogEnabled ?? false);
+            FastDrawLog.Configure(baseDirectory, config?.DebugLogEnabled ?? true);
             Current = FastDrawShortcuts.FromConfig(config?.Shortcuts);
             FastDrawLog.Debug($"配置已载入: path={configPath}, debugLogEnabled={FastDrawLog.IsDebugEnabled}");
             GD.Print($"[FastDrawImg] 快捷键配置已载入: {configPath}");
         }
         catch (Exception ex)
         {
-            FastDrawLog.Configure(baseDirectory, enabled: false);
+            FastDrawLog.Configure(baseDirectory, enabled: true);
             Current = FastDrawShortcuts.CreateDefault();
             FastDrawLog.Warn($"读取快捷键配置失败，使用默认快捷键: {ex.Message}");
         }

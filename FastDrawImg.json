@@ -8,7 +8,7 @@
   "has_dll": true,
   "dependencies": [],
   "affects_gameplay": false,
-  "debugLogEnabled": false,
+  "debugLogEnabled": true,
   "shortcuts": {
     "importImage": "Ctrl+U",
     "pasteImagePath": "Ctrl+V",
